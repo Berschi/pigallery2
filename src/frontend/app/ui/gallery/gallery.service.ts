@@ -1,18 +1,20 @@
-import {Injectable} from '@angular/core';
+import { Injectable, OnDestroy, inject, signal } from '@angular/core';
 import {ActivatedRoute, Params, Router} from '@angular/router';
-import {BehaviorSubject, Subscription} from 'rxjs';
+import {Subscription} from 'rxjs';
 import {Config} from '../../../../common/config/public/Config';
 import {QueryParams} from '../../../../common/QueryParams';
 
 @Injectable({
   providedIn: 'root'
 })
-export class GalleryService {
-  public autoPollIntervalS = new BehaviorSubject(Config.Gallery.AutoUpdate.enable ? Config.Gallery.AutoUpdate.interval : 0);
+export class GalleryService implements OnDestroy {
+  private route = inject(ActivatedRoute);
+  private router = inject(Router);
+
+  public readonly autoPollIntervalS = signal(Config.Gallery.AutoUpdate.enable ? Config.Gallery.AutoUpdate.interval : 0);
   private subscription: Subscription;
 
-  constructor(private route: ActivatedRoute,
-              private router: Router) {
+  constructor() {
 
 
     this.subscription = this.route.queryParams.subscribe(
@@ -26,12 +28,12 @@ export class GalleryService {
   }
 
   get autoPollInterval(): number {
-    return this.autoPollIntervalS.value;
+    return this.autoPollIntervalS();
   }
 
   set autoPollInterval(value: number) {
-    if (this.autoPollIntervalS.value != value) {
-      this.autoPollIntervalS.next(value);
+    if (this.autoPollIntervalS() != value) {
+      this.autoPollIntervalS.set(value);
     }
     this.updateQuery(QueryParams.gallery.autoPollInterval, Config.Gallery.AutoUpdate.enable ? Config.Gallery.AutoUpdate.interval : 0, value);
   }
@@ -41,7 +43,7 @@ export class GalleryService {
     this.subscription?.unsubscribe();
   }
 
-  private updateQuery(key: string, defValue: boolean | number, newValue: boolean | number) {
+  private updateQuery(key: string, defValue: boolean | number, newValue: boolean | number | null) {
     if (defValue === newValue) {
       newValue = null;
     }

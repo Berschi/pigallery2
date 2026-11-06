@@ -66,7 +66,8 @@ const createSharing = (options: { password?: string, recursive?: boolean } = {})
   cy.get('button#getShareButton').click();
   cy.get('input#shareLink').should('contain.value', 'http');
   return cy.get('input#shareLink').invoke('val').then((link) => {
-    cy.get('button.btn-close').click();
+    // the "copied to clipboard" toast has a close button too
+    cy.get('modal-container button.btn-close').click();
     return cy.wrap(link as unknown as string);
   });
 };
@@ -179,8 +180,8 @@ describe('Share', () => {
         createSharing({recursive: true});
 
         cy.get('button#shareButton').click();
-        cy.get('a.list-shares-button .badge').should('have.text', (before + 2).toString());
-        cy.get('a.list-shares-button').click();
+        cy.get('button.list-shares-button .badge').should('have.text', (before + 2).toString());
+        cy.get('button.list-shares-button').click();
         cy.get('modal-container .modal-footer table tbody tr').should('have.length', before + 2);
         cy.get('modal-container .modal-footer table tbody tr').contains('td', 'Yes');
         cy.get('modal-container .modal-footer table tbody tr').contains('td', 'No');

@@ -1,5 +1,5 @@
 import {ComponentFixture, TestBed} from '@angular/core/testing';
-import {BehaviorSubject} from 'rxjs';
+import {signal} from '@angular/core';
 import {NgIconsModule} from '@ng-icons/core';
 import {ionCalendarOutline, ionImageOutline, ionVideocamOutline} from '@ng-icons/ionicons';
 
@@ -26,9 +26,7 @@ class MockMapService {
     return {url: ''};
   }
 
-  get ShortAttributions() {
-    return '';
-  }
+  readonly ShortAttributions = '';
 }
 
 class MockAuthenticationService {
@@ -38,7 +36,7 @@ class MockAuthenticationService {
 }
 
 class MockThemeService {
-  darkMode = new BehaviorSubject(false);
+  readonly darkMode = signal(false);
 }
 
 class MockContentLoaderService {
@@ -88,7 +86,7 @@ describe('InfoPanelLightboxComponent - Live Photo', () => {
   });
 
   it('should show companion video row when media is a Live Photo', () => {
-    component.media = makePhoto({
+    fixture.componentRef.setInput('media', makePhoto({
       liveVideoPath: 'vacation/IMG_7936_HEVC.MOV',
       liveVideoInfo: {
         name: 'IMG_7936_HEVC.MOV',
@@ -96,8 +94,7 @@ describe('InfoPanelLightboxComponent - Live Photo', () => {
         fileSize: 4500000,
         duration: 3000,
       },
-    });
-    component.ngOnChanges();
+    }));
     fixture.detectChanges();
 
     const rows = fixture.nativeElement.querySelectorAll('.row');
@@ -111,12 +108,10 @@ describe('InfoPanelLightboxComponent - Live Photo', () => {
   });
 
   it('should not show companion video row for regular photos', () => {
-    component.media = makePhoto();
-    component.ngOnChanges();
+    fixture.componentRef.setInput('media', makePhoto());
     fixture.detectChanges();
 
     const el: HTMLElement = fixture.nativeElement;
-    const videocamIcons = el.querySelectorAll('ng-icon[name="ionVideocamOutline"]');
     // Should not have a videocam icon in the file info area
     // (videocam may appear in other sections for regular videos)
     const fileInfoRows = el.querySelectorAll('.row[title="File information and properties"], .row[title="Companion video"]');
@@ -126,18 +121,18 @@ describe('InfoPanelLightboxComponent - Live Photo', () => {
         hasCompanionRow = true;
       }
     });
-    expect(hasCompanionRow).toBeFalse();
+    expect(hasCompanionRow).toBe(false);
   });
 
   it('isLivePhoto() should return true when liveVideoPath is set', () => {
-    component.media = makePhoto({
+    fixture.componentRef.setInput('media', makePhoto({
       liveVideoPath: 'vacation/IMG_7936_HEVC.MOV',
-    });
-    expect(component.isLivePhoto()).toBeTrue();
+    }));
+    expect(component.isLivePhoto()).toBe(true);
   });
 
   it('isLivePhoto() should return false for regular photos', () => {
-    component.media = makePhoto();
-    expect(component.isLivePhoto()).toBeFalse();
+    fixture.componentRef.setInput('media', makePhoto());
+    expect(component.isLivePhoto()).toBe(false);
   });
 });

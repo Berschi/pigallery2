@@ -1,34 +1,37 @@
-import {Component, OnDestroy, OnInit} from '@angular/core';
-import {RouterLink} from '@angular/router';
-import {FilterOption, FilterService, SelectedFilter} from './filter.service';
-import { NgIf, NgFor, NgClass, DatePipe } from '@angular/common';
+import { Component, OnDestroy, OnInit, computed, inject } from '@angular/core';
+import {ActiveFilters, FilterOption, FilterService, SelectedFilter} from './filter.service';
+import { DatePipe } from '@angular/common';
 import { PopoverDirective } from 'ngx-bootstrap/popover';
 import { NgIconComponent } from '@ng-icons/core';
 import { FormsModule } from '@angular/forms';
 
 @Component({
     selector: 'app-gallery-filter',
-    styleUrls: ['./filter.gallery.component.css'],
+    styleUrl: './filter.gallery.component.css',
     templateUrl: './filter.gallery.component.html',
     imports: [
-        NgIf,
-        NgFor,
-        PopoverDirective,
-        NgIconComponent,
-        FormsModule,
-        NgClass,
-        DatePipe,
-    ]
+    PopoverDirective,
+    NgIconComponent,
+    FormsModule,
+    DatePipe
+]
 })
 export class GalleryFilterComponent implements OnInit, OnDestroy {
+  filterService = inject(FilterService);
+
   public readonly unknownText;
   minDate = 0;
   maxDate = 100;
   NUMBER_MAX_VALUE = Number.MAX_VALUE;
   NUMBER_MIN_VALUE = Number.MIN_VALUE;
   showStatistic = false;
+  // [filter index][option index]: if the option is the only selected one of its filter.
+  // The options are edited in place, but every edit calls onFilterChange(), that updates filteredContent.
+  public readonly onlySelected = computed((): boolean[][] =>
+    this.filterService.filteredContent().filters.selectedFilters
+      .map((filter): boolean[] => filter.options.map((option): boolean => this.isOnlySelected(filter, option))));
 
-  constructor(public filterService: FilterService) {
+  constructor() {
     this.unknownText = '<' + $localize`unknown` + '>';
   }
 
@@ -52,18 +55,8 @@ export class GalleryFilterComponent implements OnInit, OnDestroy {
     );
   }
 
-  get ActiveFilters(): {
-    filtersVisible: boolean;
-    areFiltersActive: boolean;
-    dateFilter: {
-      minDate: number;
-      maxDate: number;
-      minFilter: number;
-      maxFilter: number;
-    };
-    selectedFilters: SelectedFilter[];
-  } {
-    return this.filterService.activeFilters.value;
+  get ActiveFilters(): ActiveFilters {
+    return this.filterService.filteredContent().filters;
   }
 
 
@@ -90,6 +83,11 @@ export class GalleryFilterComponent implements OnInit, OnDestroy {
     return true;
   }
 
+  toggleOption(option: FilterOption): void {
+    option.selected = !option.selected;
+    this.filterService.onFilterChange();
+  }
+
   toggleSelectOnly(
       filter: SelectedFilter,
       option: FilterOption,
@@ -104,7 +102,7 @@ export class GalleryFilterComponent implements OnInit, OnDestroy {
     this.filterService.onFilterChange();
   }
 
-  newMinDate($event: Event): void {
+  newMinDate(): void {
     const diff =
         (this.ActiveFilters.dateFilter.maxDate -
             this.ActiveFilters.dateFilter.minDate) *
@@ -121,7 +119,7 @@ export class GalleryFilterComponent implements OnInit, OnDestroy {
     this.filterService.onFilterChange();
   }
 
-  newMaxDate($event: Event): void {
+  newMaxDate(): void {
     const diff =
         (this.ActiveFilters.dateFilter.maxDate -
             this.ActiveFilters.dateFilter.minDate) *

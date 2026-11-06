@@ -32,7 +32,7 @@ const LOG_TAG = '[SQLConnection]';
 type Writeable<T> = { -readonly [P in keyof T]: T[P] };
 
 export class SQLConnection {
-  // eslint-disable-next-line @typescript-eslint/ban-types
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
   private static entries: Function[] = [
     UserEntity,
     FileEntity,
@@ -57,12 +57,12 @@ export class SQLConnection {
     'sqlite_sequence'
   ];
 
-  // eslint-disable-next-line @typescript-eslint/ban-types
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
   public static getEntries(): Function[] {
     return this.entries;
   }
 
-  // eslint-disable-next-line @typescript-eslint/ban-types
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
   public static async addEntries(tables: Function[]) {
     if (!tables?.length) {
       return;
@@ -94,7 +94,7 @@ export class SQLConnection {
     try {
       await getConnection('test').destroy();
       // eslint-disable-next-line no-empty
-    } catch (err) {
+    } catch {
     }
     const options = this.getDriver(config);
     options.name = 'test';
@@ -229,7 +229,7 @@ export class SQLConnection {
     try {
       version = (await connection.getRepository(VersionEntity).find())[0];
       // eslint-disable-next-line no-empty
-    } catch (ex) {
+    } catch {
     }
     if (version && version.version === DataStructureVersion) {
       return;
@@ -242,12 +242,21 @@ export class SQLConnection {
 
     let users: UserEntity[] = [];
     try {
+      // only select the columns that exist in the old scheme, so adding a column to the user does not lose the users
+      const metadata = connection.getMetadata(UserEntity);
+      const queryRunner = connection.createQueryRunner();
+      const table = await queryRunner.getTable(metadata.tableName);
+      await queryRunner.release();
+      const existingColumns = new Set((table?.columns || []).map(c => c.name));
       users = await connection
         .getRepository(UserEntity)
         .createQueryBuilder('user')
+        .select(metadata.columns
+          .filter(c => existingColumns.has(c.databaseName))
+          .map(c => 'user.' + c.propertyName))
         .getMany();
       // eslint-disable-next-line no-empty
-    } catch (ex) {
+    } catch {
     }
     await connection.dropDatabase();
     await connection.synchronize();

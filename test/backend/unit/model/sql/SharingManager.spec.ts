@@ -6,13 +6,14 @@ import {UserEntity} from '../../../../../src/backend/model/database/enitites/Use
 import {UserDTO, UserRoles} from '../../../../../src/common/entities/UserDTO';
 import {DBTestHelper} from '../../../DBTestHelper';
 import {DirectorySearch, SearchQueryTypes, TextSearch, TextSearchQueryMatchTypes} from '../../../../../src/common/entities/SearchQueryDTO';
+import {TestHelper} from '../../../../TestHelper';
 
 // to help WebStorm to handle the test cases
-declare let describe: any;
 declare const after: any;
-describe = DBTestHelper.describe();
+const describe = DBTestHelper.describe();
 
 describe('SharingManager', (sqlHelper: DBTestHelper) => {
+  before(TestHelper.resetConfig);
 
 
   let creator: UserDTO = null;
@@ -76,7 +77,7 @@ describe('SharingManager', (sqlHelper: DBTestHelper) => {
       timeStamp: Date.now()
     };
 
-    const saved = await sm.createSharing(sharing);
+    await sm.createSharing(sharing);
     const found = await sm.findOne('testKey');
 
     expect(found.id).to.not.equals(null);

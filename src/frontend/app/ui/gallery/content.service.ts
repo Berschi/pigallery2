@@ -1,23 +1,18 @@
-import {Injectable} from '@angular/core';
-import {Observable, shareReplay} from 'rxjs';
+import { Injectable, computed, inject } from '@angular/core';
 import {GallerySortingService, GroupedDirectoryContent} from './navigator/sorting.service';
 import {FilterService} from './filter/filter.service';
-import {ContentLoaderService} from './contentLoader.service';
 
-@Injectable()
+@Injectable({providedIn: 'root'})
 export class ContentService {
-  public sortedFilteredContent: Observable<GroupedDirectoryContent>;
+  private sortingService = inject(GallerySortingService);
+  private filterService = inject(FilterService);
 
-  constructor(
-      private contentLoaderService: ContentLoaderService,
-      private sortingService: GallerySortingService,
-      private filterService: FilterService
-  ) {
-    this.sortedFilteredContent = this.sortingService
-        .applySorting(
-            this.filterService.applyFilters(this.contentLoaderService.originalContent)
-        ).pipe(shareReplay(1));
-
-  }
+  public readonly sortedFilteredContent = computed((): GroupedDirectoryContent | null =>
+    this.sortingService.applySorting(
+      this.filterService.filteredContent().content,
+      this.sortingService.sorting(),
+      this.sortingService.grouping()
+    )
+  );
 
 }

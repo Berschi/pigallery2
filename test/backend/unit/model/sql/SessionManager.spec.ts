@@ -1,4 +1,3 @@
-/* eslint-disable no-unused-expressions,@typescript-eslint/no-unused-expressions */
 import {expect} from 'chai';
 import {ObjectManagers} from '../../../../../src/backend/model/ObjectManagers';
 import {UserEntity} from '../../../../../src/backend/model/database/enitites/UserEntity';
@@ -16,6 +15,7 @@ import {SharingEntity} from '../../../../../src/backend/model/database/enitites/
 import {SessionManager} from '../../../../../src/backend/model/database/SessionManager';
 import {Config} from '../../../../../src/common/config/private/Config';
 import {DirectorySearchConfig} from '../../../../../src/common/config/private/PrivateConfig';
+import {TestHelper} from '../../../../TestHelper';
 
 declare let describe: any;
 declare const it: any;
@@ -25,6 +25,7 @@ const tmpDescribe = describe;
 describe = DBTestHelper.describe(); // fake it so the IDE plays nicely (recognize the test)
 
 describe('SessionManager', (sqlHelper: DBTestHelper) => {
+  before(TestHelper.resetConfig);
   describe = tmpDescribe;
   describe('buildContext', () => {
 
@@ -165,7 +166,6 @@ describe('SessionManager', (sqlHelper: DBTestHelper) => {
 
       // Clone the original queries for later comparison
       const originalAllowQuery = JSON.parse(JSON.stringify(user.allowQuery));
-      const originalBlockQuery = JSON.parse(JSON.stringify(user.blockQuery));
 
       // Mock the SearchManager.prepareAndBuildWhereQuery method
       const mockProjectionQuery = new Brackets(qb => qb.where('complex combined query'));
@@ -218,7 +218,6 @@ describe('SessionManager', (sqlHelper: DBTestHelper) => {
         matchType: TextSearchQueryMatchTypes.exact_match
       } as TextSearch;
       // Mock the SearchManager.prepareAndBuildWhereQuery method
-      const mockProjectionQuery = new Brackets(qb => qb.where('directory.path = :path', {path: '/allowed/path'}));
  /*     ObjectManagers.getInstance().SearchManager = {
         prepareAndBuildWhereQuery: (query: any) => {
           return Promise.resolve(mockProjectionQuery);

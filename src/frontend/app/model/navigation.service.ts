@@ -1,4 +1,4 @@
-import {Injectable} from '@angular/core';
+import {Injectable, computed, inject} from '@angular/core';
 
 import {IsActiveMatchOptions, Router} from '@angular/router';
 import {ShareService} from '../ui/gallery/share.service';
@@ -6,10 +6,16 @@ import {Config} from '../../../common/config/public/Config';
 import {NavigationLinkTypes} from '../../../common/config/public/ClientConfig';
 import {SearchQueryUtils} from '../../../common/SearchQueryUtils';
 
-@Injectable()
+@Injectable({providedIn: 'root'})
 export class NavigationService {
-  constructor(private router: Router, private shareService: ShareService) {
-  }
+  private router = inject(Router);
+  private shareService = inject(ShareService);
+  // the url of the last successful navigation (the same as router.url once the navigation finished)
+  public readonly url = computed((): string => {
+    const navigation = this.router.lastSuccessfulNavigation();
+    return navigation?.finalUrl ? this.router.serializeUrl(navigation.finalUrl) : this.router.url;
+  });
+
 
   public isLoginPage(): boolean {
     return (
@@ -42,7 +48,7 @@ export class NavigationService {
         });
       } else {
         console.error('Navigating to share login without password protection. Something went somewhere off');
-        this.toError();
+        return this.toError();
       }
     } else {
       return this.router.navigate(['login']);

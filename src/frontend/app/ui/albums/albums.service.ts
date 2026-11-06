@@ -1,19 +1,16 @@
-import {Injectable} from '@angular/core';
+import { Injectable, inject, signal } from '@angular/core';
 import {NetworkService} from '../../model/network/network.service';
-import {BehaviorSubject} from 'rxjs';
 import {AlbumBaseDTO} from '../../../../common/entities/album/AlbumBaseDTO';
 import {SearchQueryDTO} from '../../../../common/entities/SearchQueryDTO';
 
-@Injectable()
+@Injectable({providedIn: 'root'})
 export class AlbumsService {
-  public albums: BehaviorSubject<AlbumBaseDTO[]>;
+  private networkService = inject(NetworkService);
 
-  constructor(private networkService: NetworkService) {
-    this.albums = new BehaviorSubject<AlbumBaseDTO[]>(null);
-  }
+  public readonly albums = signal<AlbumBaseDTO[] | null>(null);
 
   public async getAlbums(): Promise<void> {
-    this.albums.next(
+    this.albums.set(
         (await this.networkService.getJson<AlbumBaseDTO[]>('/albums')).sort(
             (a, b): number => a.name.localeCompare(b.name)
         )

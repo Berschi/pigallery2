@@ -1,4 +1,4 @@
-import {DivIcon, setOptions} from 'leaflet';
+import {DivIcon, Marker, setOptions} from 'leaflet';
 
 export interface SvgIconOptions {
   color?: string;
@@ -7,7 +7,7 @@ export interface SvgIconOptions {
   small?: boolean;
 }
 
-const SvgIcon: { new(options?: SvgIconOptions): DivIcon } = DivIcon.extend({
+const SvgIcon: new(options?: SvgIconOptions) => DivIcon = DivIcon.extend({
   initialize: function(options: SvgIconOptions = {}) {
     options.color = options.color || 'var(--bs-primary)';
     options.svgItems = options.svgItems || '<path d="M256 512c141.4 0 256-114.6 256-256S397.4 0 256 0S0 114.6 0 256S114.6 512 256 512z"/>';
@@ -35,3 +35,6 @@ export class MarkerFactory {
   }
 
 }
+
+// Default icon of every leaflet marker. Set here, so leaflet loads only with the map code.
+Marker.prototype.options.icon = MarkerFactory.defIcon;

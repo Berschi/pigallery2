@@ -1,4 +1,4 @@
-import {Component, ElementRef, HostListener, Input, OnChanges, OnDestroy, SimpleChanges, ViewChild,} from '@angular/core';
+import { Component, ElementRef, OnChanges, OnDestroy, OnInit, type SimpleChanges, effect, inject, input, signal, untracked, viewChild } from '@angular/core';
 import {PhotoDTO} from '../../../../../../common/entities/PhotoDTO';
 import {Dimension} from '../../../../model/IRenderable';
 import {FullScreenService} from '../../fullscreen.service';
@@ -25,21 +25,24 @@ import {
   MapOptions,
   Marker,
   marker,
-  markerClusterGroup,
   MarkerClusterGroup,
   Point,
   polyline,
   tileLayer,
   TileLayer
 } from 'leaflet';
+// leaflet.markercluster adds itself to the global L object. The bundler copies the exports of
+// CommonJS modules on import, so only the default import (L itself) sees what the plugin added.
+import Leaflet from 'leaflet';
+import 'leaflet.markercluster';
 import {ThemeService} from '../../../../model/theme.service';
 import {Subscription} from 'rxjs';
 import {MarkerFactory} from '../MarkerFactory';
 import {ionImageOutline, ionSpeedometerOutline, ionTimeOutline, ionTrailSignOutline, ionWarningOutline} from '@ng-icons/ionicons';
 import {LeafletControlLayersConfig, LeafletModule} from '@bluehalo/ngx-leaflet';
-import {NgIf} from '@angular/common';
+
 import {NgIconComponent} from '@ng-icons/core';
-import {DurationPipe} from '../../../../pipes/DurationPipe';
+import {formatDuration} from '../../../../pipes/DurationPipe';
 import {ActivatedRoute, Params, Router} from '@angular/router';
 import {QueryParams} from '../../../../../../common/QueryParams';
 import {QueryService} from '../../../../model/query.service';
@@ -47,34 +50,46 @@ import {QueryService} from '../../../../model/query.service';
 
 @Component({
   selector: 'app-gallery-map-lightbox',
-  styleUrls: ['./lightbox.map.gallery.component.css'],
+  host: {
+    '(window:resize)': 'onResize()',
+    '(window:keydown)': 'onKeyPress($event)'
+  },
+  styleUrl: './lightbox.map.gallery.component.css',
   templateUrl: './lightbox.map.gallery.component.html',
   imports: [
     LeafletModule,
-    NgIf,
-    NgIconComponent,
-  ]
+    NgIconComponent
+]
 })
-export class GalleryMapLightboxComponent implements OnChanges, OnDestroy {
-  @Input() photos: PhotoDTO[];
-  @Input() gpxFiles: FileDTO[];
-  @Input() parentDimension: Dimension;
-  public lightboxDimension: Dimension = {
+export class GalleryMapLightboxComponent implements OnChanges, OnDestroy, OnInit {
+  fullScreenService = inject(FullScreenService);
+  private thumbnailService = inject(ThumbnailManagerService);
+  mapService = inject(MapService);
+  private themeService = inject(ThemeService);
+  private route = inject(ActivatedRoute);
+  private queryService = inject(QueryService);
+  private router = inject(Router);
+
+  readonly photos = input.required<PhotoDTO[]>();
+  readonly gpxFiles = input.required<FileDTO[]>();
+  // read only when the lightbox opens or closes, so the parent is not measured on every change detection
+  readonly getParentDimension = input.required<() => Dimension>();
+  public readonly lightboxDimension = signal<Dimension>({
     top: 0,
     left: 0,
     width: 0,
     height: 0,
-  } as Dimension;
-  public mapDimension: Dimension = {
+  } as Dimension);
+  public readonly mapDimension = signal<Dimension>({
     top: 0,
     left: 0,
     width: 0,
     height: 0,
-  } as Dimension;
-  public visible = false;
-  public controllersVisible = false;
-  public opacity = 1.0;
-  @ViewChild('root', {static: true}) elementRef: ElementRef;
+  } as Dimension);
+  public readonly visible = signal(false);
+  public readonly controllersVisible = signal(false);
+  public readonly opacity = signal(1.0);
+  readonly elementRef = viewChild.required<ElementRef>('root');
   public mapOptions: MapOptions = {
     zoom: 2,
     // setting max zoom is needed to MarkerCluster https://github.com/Leaflet/Leaflet.markercluster/issues/611
@@ -84,7 +99,7 @@ export class GalleryMapLightboxComponent implements OnChanges, OnDestroy {
   defLayer: TileLayer;
   darkLayer: TileLayer;
   mapLayerControl: Control.Layers;
-  private subscription: { darkMode: Subscription, route: Subscription } = {darkMode: null, route: null};
+  private subscription: { route: Subscription | null } = {route: null};
   private smallIconSize = new Point(
     Config.Media.Photo.iconSize * 0.75,
     Config.Media.Photo.iconSize * 0.75
@@ -102,7 +117,7 @@ export class GalleryMapLightboxComponent implements OnChanges, OnDestroy {
   } = {
     baseLayers: {},
     overlays: {
-      Photos: markerClusterGroup({
+      Photos: Leaflet.markerClusterGroup({
         maxClusterRadius: 20,
         iconCreateFunction: (cluster) => {
           const childCount = cluster.getChildCount();
@@ -140,28 +155,23 @@ export class GalleryMapLightboxComponent implements OnChanges, OnDestroy {
   }[] = [];
   private thumbnailsOnLoad: ThumbnailBase[] = [];
   private leafletMap: Map;
-  private longPathSEPairs: { [key: string]: number } = {}; // stores how often a long distance path pair comes up
+  private longPathSEPairs: Record<string, number> = {}; // stores how often a long distance path pair comes up
 
-  constructor(
-    public fullScreenService: FullScreenService,
-    private thumbnailService: ThumbnailManagerService,
-    public mapService: MapService,
-    private themeService: ThemeService,
-    private route: ActivatedRoute,
-    private queryService: QueryService,
-    private router: Router,
-    private durationPipe: DurationPipe
-  ) {
+  constructor() {
+    // update map theme on dark theme
+    // effect: swapping the Leaflet layer is an imperative call to a third-party library
+    effect(() => {
+      this.themeService.darkMode();
+      untracked(this.selectBaseLayer);
+    });
     this.setUpPathLayers();
-    this.mapOptions.layers = [this.mapLayersControlOption.overlays.Photos];
-    this.pathLayersConfigOrdered.forEach(pl => this.mapOptions.layers.push(pl.layer));
-    for (let i = 0; i < mapService.Layers.length; ++i) {
-      const l = mapService.Layers[i];
-      const tl = tileLayer(l.url, {attribution: mapService.Attributions});
-      if (l.url === mapService.MapLayer.url) {
+    this.mapOptions.layers = [this.mapLayersControlOption.overlays.Photos, ...this.pathLayersConfigOrdered.map(pl => pl.layer)];
+    for (const l of this.mapService.Layers) {
+      const tl = tileLayer(l.url, {attribution: this.mapService.Attributions});
+      if (l.url === this.mapService.MapLayer.url) {
         this.defLayer = tl;
       }
-      if (l.url === mapService.DarkMapLayer.url) {
+      if (l.url === this.mapService.DarkMapLayer.url) {
         this.darkLayer = tl;
       }
       this.mapLayersControlOption.baseLayers[l.name] = tl;
@@ -169,7 +179,7 @@ export class GalleryMapLightboxComponent implements OnChanges, OnDestroy {
     if (!this.defLayer || !this.darkLayer) {
       throw new Error('Cant find default or dark layer');
     }
-    this.mapOptions.layers.push(this.themeService.darkMode.value ? this.darkLayer : this.defLayer);
+    this.mapOptions.layers.push(this.themeService.darkMode() ? this.darkLayer : this.defLayer);
 
     this.mapLayerControl = control.layers(
       this.mapLayersControlOption.baseLayers,
@@ -239,18 +249,15 @@ export class GalleryMapLightboxComponent implements OnChanges, OnDestroy {
         }
       }
     );
-
-    // update map theme on dark theme
-    this.subscription.darkMode = this.themeService.darkMode.subscribe(this.selectBaseLayer);
   }
 
   ngOnDestroy(): void {
-    this.subscription.darkMode?.unsubscribe();
     this.subscription.route?.unsubscribe();
   }
 
+  // Side effect: redraws the Leaflet layers.
   ngOnChanges(changes: SimpleChanges): void {
-    if (this.visible === false) {
+    if (this.visible() === false) {
       return;
     }
     if (changes['photos'] || changes['gpxFiles']) {
@@ -259,20 +266,19 @@ export class GalleryMapLightboxComponent implements OnChanges, OnDestroy {
   }
 
 
-  @HostListener('window:resize', ['$event'])
   async onResize(): Promise<void> {
-    this.lightboxDimension = {
+    this.lightboxDimension.set({
       top: 0,
       left: 0,
       width: GalleryMapLightboxComponent.getScreenWidth(),
       height: GalleryMapLightboxComponent.getScreenHeight(),
-    } as Dimension;
-    this.mapDimension = {
+    } as Dimension);
+    this.mapDimension.set({
       top: 0,
       left: 0,
       width: GalleryMapLightboxComponent.getScreenWidth(),
       height: GalleryMapLightboxComponent.getScreenHeight(),
-    } as Dimension;
+    } as Dimension);
     await Utils.wait(0);
     this.leafletMap.invalidateSize();
   }
@@ -288,20 +294,15 @@ export class GalleryMapLightboxComponent implements OnChanges, OnDestroy {
       this.leafletMap.addLayer(this.mapLayersControlOption.overlays.Photos);
     }
     this.thumbnailsOnLoad = [];
-    this.photos
-      .filter((p): number => {
-        return (
-          p.metadata &&
-          p.metadata.positionData &&
-          p.metadata.positionData.GPSData &&
-          p.metadata.positionData.GPSData.latitude &&
-          p.metadata.positionData.GPSData.longitude
-        );
-      })
+    this.photos()
       .forEach((p): void => {
+        const gps = p.metadata?.positionData?.GPSData;
+        if (!gps?.latitude || !gps.longitude) {
+          return;
+        }
         const mkr = marker({
-          lat: p.metadata.positionData.GPSData.latitude,
-          lng: p.metadata.positionData.GPSData.longitude,
+          lat: gps.latitude,
+          lng: gps.longitude,
         });
         this.mapLayersControlOption.overlays.Photos.addLayer(mkr);
         let width = 500;
@@ -330,7 +331,7 @@ export class GalleryMapLightboxComponent implements OnChanges, OnDestroy {
           }
           mkr.on('popupopen', () => {
             const popup = mkr.getPopup();
-            const container = popup.getElement();
+            const container = popup?.getElement();
             if (container) {
               const img = container.querySelector('img');
               if (img) {
@@ -371,7 +372,7 @@ export class GalleryMapLightboxComponent implements OnChanges, OnDestroy {
             const setIcon = () => {
               mkr.setIcon(
                 icon({
-                  iconUrl: iconTh.Src,
+                  iconUrl: iconTh.Src ?? '', // set once the thumbnail loaded
                   iconSize: this.usedIconSize, // size of the icon
                   className: 'photo-icon',
                 })
@@ -397,7 +398,7 @@ export class GalleryMapLightboxComponent implements OnChanges, OnDestroy {
           });
         }
       });
-    if (this.gpxFiles) {
+    if (this.gpxFiles()) {
       this.loadGPXFiles().catch(console.error);
     }
   }
@@ -432,9 +433,8 @@ export class GalleryMapLightboxComponent implements OnChanges, OnDestroy {
 
   }
 
-  @HostListener('window:keydown', ['$event'])
   onKeyPress(event: KeyboardEvent): void {
-    if (this.visible !== true) {
+    if (this.visible() !== true) {
       return;
     }
     switch (event.key) {
@@ -443,7 +443,7 @@ export class GalleryMapLightboxComponent implements OnChanges, OnDestroy {
         if (this.fullScreenService.isFullScreenEnabled()) {
           this.fullScreenService.exitFullScreen();
         } else {
-          this.fullScreenService.showFullScreen(this.elementRef.nativeElement);
+          this.fullScreenService.showFullScreen(this.elementRef().nativeElement);
         }
         break;
       case 'Escape':
@@ -454,7 +454,8 @@ export class GalleryMapLightboxComponent implements OnChanges, OnDestroy {
 
   onMapReady(map: Map): void {
     this.leafletMap = map;
-    this.leafletMap.setMaxZoom(undefined);
+    // no limit: leaflet then uses the max zoom of the layers (its typing does not allow undefined)
+    this.leafletMap.setMaxZoom(undefined as unknown as number);
     this.leafletMap.zoomControl.setPosition('bottomright');
     this.mapLayerControl.addTo(this.leafletMap);
   }
@@ -493,44 +494,45 @@ export class GalleryMapLightboxComponent implements OnChanges, OnDestroy {
   }
 
   private async show(): Promise<void> {
-    if (this.visible === true) {
+    if (this.visible() === true) {
       return;
     }
     this.clearMap();
-    this.visible = true;
-    this.opacity = 1.0;
-    this.lightboxDimension = Utils.clone(this.parentDimension);
-    this.lightboxDimension.top -= PageHelper.ScrollY;
-    this.mapDimension = {
+    this.visible.set(true);
+    this.opacity.set(1.0);
+    const from = Utils.clone(this.getParentDimension()());
+    from.top -= PageHelper.ScrollY;
+    this.lightboxDimension.set(from);
+    this.mapDimension.set({
       top: 0,
       left: 0,
       width: GalleryMapLightboxComponent.getScreenWidth(),
       height: GalleryMapLightboxComponent.getScreenHeight(),
-    } as Dimension;
+    } as Dimension);
     this.showImages();
     //  this.centerMap();
     PageHelper.hideScrollY('map-lightbox');
     await Utils.wait(0);
-    this.lightboxDimension = {
+    this.lightboxDimension.set({
       top: 0,
       left: 0,
       width: GalleryMapLightboxComponent.getScreenWidth(),
       height: GalleryMapLightboxComponent.getScreenHeight(),
-    } as Dimension;
+    } as Dimension);
     await Utils.wait(350);
     this.leafletMap.invalidateSize();
     this.centerMap();
-    this.controllersVisible = true;
+    this.controllersVisible.set(true);
   }
 
   private hide(): void {
-    if (this.visible === false) {
+    if (this.visible() === false) {
       this.clearMap();
       return;
     }
     this.fullScreenService.exitFullScreen();
-    this.controllersVisible = false;
-    const to = this.parentDimension;
+    this.controllersVisible.set(false);
+    const to = this.getParentDimension()();
 
     // if target image out of screen -> scroll to there
     if (
@@ -541,12 +543,13 @@ export class GalleryMapLightboxComponent implements OnChanges, OnDestroy {
       PageHelper.ScrollY = to?.top;
     }
 
-    this.lightboxDimension = this.parentDimension;
-    this.lightboxDimension.top -= PageHelper.ScrollY;
+    const lightboxTo = Utils.clone(this.getParentDimension()());
+    lightboxTo.top -= PageHelper.ScrollY;
+    this.lightboxDimension.set(lightboxTo);
     PageHelper.showScrollY('map-lightbox');
-    this.opacity = 0.0;
+    this.opacity.set(0.0);
     setTimeout((): void => {
-      this.visible = false;
+      this.visible.set(false);
       this.clearMap();
       this.leafletMap.setZoom(2);
     }, 500);
@@ -556,18 +559,18 @@ export class GalleryMapLightboxComponent implements OnChanges, OnDestroy {
     if (!this.leafletMap) {
       return;
     }
-    if (this.leafletMap.hasLayer(this.defLayer) && this.themeService.darkMode.value) {
+    if (this.leafletMap.hasLayer(this.defLayer) && this.themeService.darkMode()) {
       this.leafletMap.removeLayer(this.defLayer);
       this.leafletMap.addLayer(this.darkLayer);
     }
-    if (this.leafletMap.hasLayer(this.darkLayer) && !this.themeService.darkMode.value) {
+    if (this.leafletMap.hasLayer(this.darkLayer) && !this.themeService.darkMode()) {
       this.leafletMap.removeLayer(this.darkLayer);
       this.leafletMap.addLayer(this.defLayer);
     }
   };
 
   private centerMap(): void {
-    let bounds: LatLngBounds = null;
+    let bounds: LatLngBounds | null = null;
     for (const k of Object.keys(this.mapLayersControlOption.overlays)) {
       const b = this.mapLayersControlOption?.overlays?.[k]?.getBounds();
       if (!b) {
@@ -663,7 +666,8 @@ export class GalleryMapLightboxComponent implements OnChanges, OnDestroy {
 
   private async loadGPXFiles(): Promise<void> {
     this.clearPath();
-    if (this.gpxFiles.length === 0) {
+    const gpxFiles = this.gpxFiles();
+    if (gpxFiles.length === 0) {
       this.pathLayersConfigOrdered.forEach(p => {
         // remove from controls
         this.mapLayerControl.removeLayer(p.layer);
@@ -678,7 +682,7 @@ export class GalleryMapLightboxComponent implements OnChanges, OnDestroy {
     const loadAFile = async (file: FileDTO) => {
       const parsedGPX = await this.mapService.getMapCoordinates(file);
 
-      let pathLayer: { layer: FeatureGroup, icon?: DivIcon, theme?: { color?: string, dashArray?: string } };
+      let pathLayer: { layer: FeatureGroup, icon: DivIcon, theme?: { color?: string, dashArray?: string } } | undefined;
       for (const pl of this.pathLayersConfigOrdered) {
         pathLayer = {layer: pl.layer, icon: MarkerFactory.defIcon};
         if (!pl.themes || pl.themes.length === 0) {
@@ -713,7 +717,7 @@ export class GalleryMapLightboxComponent implements OnChanges, OnDestroy {
             stats.push(`<span title="Distance"><svg style="width: 16px; height: 16px; vertical-align: middle;" viewBox="0 0 512 512">${ionTrailSignOutline}</svg> ${this.formatDistance(parsedGPX.stats.distance)}</span>`);
           }
           if (parsedGPX.stats.duration > 0) {
-            stats.push(`<span title="Duration"><svg style="width: 16px; height: 16px; vertical-align: middle;" viewBox="0 0 512 512">${ionTimeOutline}</svg> ${this.durationPipe.transform(parsedGPX.stats.duration)}</span>`);
+            stats.push(`<span title="Duration"><svg style="width: 16px; height: 16px; vertical-align: middle;" viewBox="0 0 512 512">${ionTimeOutline}</svg> ${formatDuration(parsedGPX.stats.duration)}</span>`);
           }
           if (parsedGPX.stats.averageSpeed > 0) {
             stats.push(`<span title="Average Speed"><svg style="width: 16px; height: 16px; vertical-align: middle;" viewBox="0 0 512 512">${ionSpeedometerOutline}</svg> ${parsedGPX.stats.averageSpeed.toFixed(1)} km/h</span>`);
@@ -762,7 +766,7 @@ export class GalleryMapLightboxComponent implements OnChanges, OnDestroy {
       });
     };
 
-    await Promise.all(this.gpxFiles.map(f => loadAFile(f)));
+    await Promise.all(gpxFiles.map(f => loadAFile(f)));
 
     // Add layer to the map
     this.pathLayersConfigOrdered.filter(pl => pl.layer.getLayers().length > 0).forEach((pl) => {
@@ -778,7 +782,7 @@ export class GalleryMapLightboxComponent implements OnChanges, OnDestroy {
       }
     });
     // center map on paths if no photos to center map on
-    if (!this.photos?.length) {
+    if (!this.photos()?.length) {
       this.centerMap();
     }
   }

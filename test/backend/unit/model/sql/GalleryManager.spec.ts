@@ -1,10 +1,10 @@
-import * as fs from 'fs';
+import fs from 'fs';
 import * as path from 'path';
 import {DBTestHelper} from '../../../DBTestHelper';
 import {GalleryManager} from '../../../../../src/backend/model/database/GalleryManager';
 import {ParentDirectoryDTO} from '../../../../../src/common/entities/DirectoryDTO';
 import {Connection} from 'typeorm';
-import {ContextUser, SessionContext} from '../../../../../src/backend/model/SessionContext';
+import {SessionUser, SessionContext} from '../../../../../src/backend/model/SessionContext';
 import {
   DirectorySearch,
   SearchQueryTypes,
@@ -19,11 +19,9 @@ import {UserRoles} from '../../../../../src/common/entities/UserDTO';
 import {UserEntity} from '../../../../../src/backend/model/database/enitites/UserEntity';
 import {SharingEntity} from '../../../../../src/backend/model/database/enitites/SharingEntity';
 import {IndexingManager} from '../../../../../src/backend/model/database/IndexingManager';
-import {ProjectedDirectoryCacheEntity} from '../../../../../src/backend/model/database/enitites/ProjectedDirectoryCacheEntity';
+import {TestHelper} from '../../../../TestHelper';
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const deepEqualInAnyOrder = require('deep-equal-in-any-order');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const chai = require('chai');
 
 chai.use(deepEqualInAnyOrder);
@@ -52,6 +50,7 @@ class GalleryManagerTest extends GalleryManager {
 }
 
 describe('GalleryManager', (sqlHelper: DBTestHelper) => {
+  before(TestHelper.resetConfig);
   describe = tmpDescribe;
 
   let galleryManager: GalleryManagerTest;
@@ -188,7 +187,7 @@ describe('GalleryManager', (sqlHelper: DBTestHelper) => {
 
     beforeEach(() => {
       // Reset config defaults that matter for tests
-      Config.loadSync();
+      sqlHelper.resetConfig();
 
       gm = new GalleryManagerTest();
       sessionNoProj = new SessionContext();
@@ -536,14 +535,14 @@ describe('GalleryManager', (sqlHelper: DBTestHelper) => {
     const fileName = (value: string): TextSearch =>
       ({type: SearchQueryTypes.file_name, value, matchType: TextSearchQueryMatchTypes.like});
 
-    const buildSession = (u: Partial<ContextUser>): Promise<SessionContext> =>
+    const buildSession = (u: Partial<SessionUser>): Promise<SessionContext> =>
       ObjectManagers.getInstance().SessionManager.buildContext({
         id: 1,
         name: 'user',
         role: UserRoles.User,
         overrideAllowBlockList: true,
         ...u
-      } as ContextUser);
+      } as SessionUser);
 
     const list = async (session: SessionContext, relDir: string) => {
       const p = GalleryManager.parseRelativeDirPath(relDir);

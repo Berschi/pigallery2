@@ -1,46 +1,40 @@
-import {ComponentFixture, fakeAsync, TestBed, tick} from '@angular/core/testing';
-import {ChangeDetectorRef, QueryList} from '@angular/core';
+import {ComponentFixture, TestBed} from '@angular/core/testing';
+import {signal} from '@angular/core';
 import {ActivatedRoute, Router} from '@angular/router';
-import {AnimationBuilder} from '@angular/animations';
-import {BehaviorSubject, of} from 'rxjs';
+import {BehaviorSubject} from 'rxjs';
 
-import {GalleryLightboxComponent, LightboxStates} from './lightbox.gallery.component';
-import {GalleryPhotoComponent} from '../grid/photo/photo.grid.gallery.component';
+import {GalleryLightboxComponent, LightboxGrid, LightboxGridTile, LightboxStates} from './lightbox.gallery.component';
 import {FullScreenService} from '../fullscreen.service';
 import {OverlayService} from '../overlay.service';
 import {WakeLockService} from '../wakelock.service';
 import {QueryService} from '../../../model/query.service';
 import {PiTitleService} from '../../../model/pi-title.service';
-import {LightboxService} from './lightbox.service';
+import {NotificationService} from '../../../model/notification.service';
 import {PhotoDTO} from '../../../../../common/entities/PhotoDTO';
 import {GridMedia} from '../grid/GridMedia';
 import {QueryParams} from '../../../../../common/QueryParams';
 import {AuthenticationService} from '../../../model/network/authentication.service';
-import {GalleryCacheService} from '../cache.gallery.service';
-import {FileSizePipe} from '../../../pipes/FileSizePipe';
-import {DatePipe} from '@angular/common';
-import {Utils} from '../../../../../common/Utils';
 import {MediaDTO} from '../../../../../common/entities/MediaDTO';
+import {provideIcons} from '@ng-icons/core';
+import {appIcons} from '../../../icons';
 
 // Mock classes
 class MockFullScreenService {
+  readonly fullScreenEnabled = signal(false);
+
   isFullScreenEnabled() {
     return false;
   }
 
-  exitFullScreen() {
-  }
+  exitFullScreen = vi.fn();
 
-  showFullScreen() {
-  }
+  showFullScreen = vi.fn();
 }
 
 class MockOverlayService {
-  showOverlay() {
-  }
+  showOverlay = vi.fn();
 
-  hideOverlay() {
-  }
+  hideOverlay = vi.fn();
 }
 
 class MockWakeLockService {
@@ -54,20 +48,18 @@ class MockWakeLockService {
 }
 
 class MockQueryService {
-  getMediaStringId(media: any) {
+  getMediaStringId(media: MediaDTO) {
     return media.name;
   }
 
-  getParams(lightbox?: { media?: MediaDTO}): { [key: string]: string } {
-    const query: { [key: string]: string } = {};
+  getParams(lightbox?: { media?: MediaDTO }): Record<string, string> {
+    const query: Record<string, string> = {};
     if (lightbox?.media) {
       query[QueryParams.gallery.photo] = this.getMediaStringId(lightbox?.media);
     }
     return query;
   }
-
 }
-
 
 class MockAuthenticationService {
   canSearch() {
@@ -75,72 +67,59 @@ class MockAuthenticationService {
   }
 }
 
-class MockGalleryCacheService {
-  getSlideshowSpeed() {
-    return 1000;
-  }
-}
-
-class MockFileSizePipe {
-}
-
 class MockPiTitleService {
-  setMediaTitle() {
-  }
+  setMediaTitle = vi.fn();
 
-  setLastNonMedia() {
-  }
+  setLastNonMedia = vi.fn();
 }
 
+class MockNotificationService {
+  info = vi.fn();
+}
 
-class MockAnimationBuilder {
-  build() {
-    return {
-      create() {
-        return {
-          play() {
-          },
-          destroy() {
-          },
-          onDone(callback: () => void) {
-            setTimeout(callback, 0);
-            return this;
-          }
-        };
-      }
-    };
-  }
+// Finishes on the next timer tick, so fake-timer tests don't wait for the 200 ms animation
+function mockAnimate(): Animation {
+  const animation = new EventTarget() as Animation;
+  animation.cancel = vi.fn();
+  setTimeout(() => animation.dispatchEvent(new Event('finish')), 0);
+  return animation;
+}
+
+class MockActivatedRoute {
+  queryParams = new BehaviorSubject<Record<string, string>>({});
 }
 
 class MockRouter {
   constructor(private ac: MockActivatedRoute) {
   }
 
-  navigate(commands: any, extras: any) {
-    let newQP = {};
+  navigate(commands: unknown, extras: { queryParams: Record<string, string | null>, queryParamsHandling?: string }) {
+    let newQP: Record<string, string> = {};
     if (extras.queryParamsHandling == 'merge') {
-      newQP = this.ac.queryParams.value;
+      newQP = {...this.ac.queryParams.value};
     }
-    newQP = {...newQP, ...extras.queryParams};
-    // prevent infinite loop
-    if (!Utils.equalsFilter(this.ac.queryParams.value, newQP)) {
-      this.ac.queryParams.next(newQP);
+    for (const [k, v] of Object.entries(extras.queryParams)) {
+      if (v === null || v === undefined) {
+        delete newQP[k];
+      } else {
+        newQP[k] = String(v);
+      }
     }
+    this.ac.queryParams.next(newQP);
     return Promise.resolve(true);
   }
 }
 
-class MockActivatedRoute {
-  queryParams = new BehaviorSubject({});
-}
-
-// Mock photo components
-function createMockPhotoComponent(media: PhotoDTO, index: number): GalleryPhotoComponent {
-  const mockComponent = {
-    gridMedia: new GridMedia(media, 1, 1, index),
-    getDimension: () => ({top: 0, left: 0, width: 100, height: 100})
-  } as GalleryPhotoComponent;
-  return mockComponent;
+// The grid with all its media "rendered" on request
+class FakeGrid implements LightboxGrid {
+  readonly media = signal<MediaDTO[] | null>(null);
+  readonly revealMedia = vi.fn((media: MediaDTO): Promise<LightboxGridTile | null> => {
+    const found = this.media()?.find(m => m.name === media.name);
+    return Promise.resolve(found ? {
+      rect: {top: 10, left: 10, width: 100, height: 100},
+      gridMedia: new GridMedia(found, 100, 100, 0)
+    } : null);
+  });
 }
 
 function createMockPhoto(name: string, index: number): PhotoDTO {
@@ -156,229 +135,303 @@ function createMockPhoto(name: string, index: number): PhotoDTO {
   } as PhotoDTO;
 }
 
-describe('GalleryLightboxComponent - Slideshow Tests', () => {
+describe('GalleryLightboxComponent', () => {
   let component: GalleryLightboxComponent;
-  let lightboxService: LightboxService;
   let fixture: ComponentFixture<GalleryLightboxComponent>;
   let mockActivatedRoute: MockActivatedRoute;
   let mockRouter: MockRouter;
-  let mockAuthenticationService: MockAuthenticationService;
-  let mockGalleryCacheService: MockGalleryCacheService;
-  let photoComponents: GalleryPhotoComponent[];
+  let grid: FakeGrid;
+  let photos: PhotoDTO[];
+  let notifications: MockNotificationService;
+
+  // runs the effects, the grid's reveal and the (mocked) animations
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 3; ++i) {
+      fixture.detectChanges();
+      await vi.advanceTimersByTimeAsync(0);
+    }
+  };
+  const openPhoto = async (name: string, extra: Record<string, string> = {}): Promise<void> => {
+    mockActivatedRoute.queryParams.next({[QueryParams.gallery.photo]: name, ...extra});
+    await settle();
+  };
+  const photoParam = (): string => mockActivatedRoute.queryParams.value[QueryParams.gallery.photo];
 
   beforeEach(async () => {
+    vi.useFakeTimers();
     mockActivatedRoute = new MockActivatedRoute();
     mockRouter = new MockRouter(mockActivatedRoute);
-    mockAuthenticationService = new MockAuthenticationService();
-    mockGalleryCacheService = new MockGalleryCacheService();
+    // jsdom has no Web Animations API
+    HTMLElement.prototype.animate = mockAnimate;
 
     await TestBed.configureTestingModule({
       imports: [GalleryLightboxComponent],
       providers: [
-        ChangeDetectorRef,
+        provideIcons(appIcons),
         {provide: FullScreenService, useClass: MockFullScreenService},
         {provide: OverlayService, useClass: MockOverlayService},
         {provide: WakeLockService, useClass: MockWakeLockService},
-        {provide: AnimationBuilder, useClass: MockAnimationBuilder},
         {provide: Router, useValue: mockRouter},
         {provide: QueryService, useClass: MockQueryService},
         {provide: ActivatedRoute, useValue: mockActivatedRoute},
         {provide: PiTitleService, useClass: MockPiTitleService},
-        {provide: AuthenticationService, useValue: mockAuthenticationService},
-        {provide: GalleryCacheService, useValue: mockGalleryCacheService},
-        {provide: FileSizePipe, useValue: MockFileSizePipe},
-        {provide: DatePipe, useValue: MockFileSizePipe},
+        {provide: AuthenticationService, useClass: MockAuthenticationService},
+        {provide: NotificationService, useClass: MockNotificationService},
       ]
     }).compileComponents();
 
+    notifications = TestBed.inject(NotificationService) as unknown as MockNotificationService;
     fixture = TestBed.createComponent(GalleryLightboxComponent);
     component = fixture.componentInstance;
 
-    lightboxService = TestBed.inject(LightboxService);
-    // Create mock photo components
-    const photos = [
+    photos = [
       createMockPhoto('photo1.jpg', 0),
       createMockPhoto('photo2.jpg', 1),
       createMockPhoto('photo3.jpg', 2)
     ];
-
-    photoComponents = photos.map((photo, index) => createMockPhotoComponent(photo, index));
-
-    // Create mock QueryList
-    const mockQueryList = {
-      length: photoComponents.length,
-      toArray: () => photoComponents,
-      get: (index: number) => photoComponents[index],
-      find: (predicate: (item: GalleryPhotoComponent) => boolean) => photoComponents.find(predicate),
-      changes: of([])
-    } as any as QueryList<GalleryPhotoComponent>;
-
-    component.setGridPhotoQL(mockQueryList);
-
-    // Mock controls component
-    component.controls = {
-      resetZoom: jasmine.createSpy('resetZoom'),
-      runSlideShow: jasmine.createSpy('runSlideShow'),
-      stopSlideShow: jasmine.createSpy('stopSlideShow')
-    } as any;
-
+    grid = new FakeGrid();
+    grid.media.set(photos);
+    fixture.componentRef.setInput('grid', grid);
     fixture.detectChanges();
+  });
+
+  afterEach(() => {
+    fixture.destroy();
+    vi.useRealTimers();
+    delete (HTMLElement.prototype as Partial<HTMLElement>).animate;
   });
 
   it('should create', () => {
     expect(component).toBeTruthy();
+    expect(component.status()).toBe(LightboxStates.Closed);
   });
 
-  it('should start slideshow when playback button is clicked', fakeAsync(() => {
-    // Arrange
-    component.status = LightboxStates.Open;
-    (component as any).navigateToPhoto(0);
+  it('should open the photo of the URL from its tile', async () => {
+    await openPhoto('photo2.jpg');
 
-    // Act
-    lightboxService.playback = true;
-    tick();
+    expect(grid.revealMedia).toHaveBeenCalledWith(photos[1]);
+    expect(component.status()).toBe(LightboxStates.Open);
+    expect(component.activePhoto()!.media).toBe(photos[1]);
+    expect(component.activeIndex()).toBe(1);
+  });
 
-    // Assert
-    expect(component.status).toBe(LightboxStates.Open);
-    expect(component.slideShowRunning).toBe(true);
-  }));
+  it('should start slideshow when playback button is clicked', async () => {
+    await openPhoto('photo1.jpg');
 
-  it('should cycle through images during slideshow', fakeAsync(() => {
-    expect(lightboxService).toBeTruthy();
-    // Arrange
-    spyOn(mockRouter, 'navigate').and.returnValue(Promise.resolve(true));
-    component.status = LightboxStates.Open;
-    (component as any).navigateToPhoto(0);
-    component.slideShowRunning = true;
+    mockRouter.navigate([], {queryParams: {[QueryParams.gallery.lightbox.playback]: 'true'}, queryParamsHandling: 'merge'});
+    await settle();
 
-    // Act - simulate next image calls during slideshow
+    expect(component.status()).toBe(LightboxStates.Open);
+    expect(component.slideShowRunning()).toBe(true);
+  });
+
+  it('should cycle through images during slideshow', async () => {
+    await openPhoto('photo1.jpg', {[QueryParams.gallery.lightbox.playback]: 'true'});
+
     component.nextImage();
-    tick();
+    await settle();
 
-    // Assert
-    expect(mockRouter.navigate).toHaveBeenCalled();
-  }));
+    expect(photoParam()).toBe('photo2.jpg');
+    expect(component.activePhoto()!.media).toBe(photos[1]);
+    expect(component.slideShowRunning()).toBe(true);
+  });
 
-  it('should stop slideshow at last image when loopSlideshow is disabled', fakeAsync(() => {
-    component.status = LightboxStates.Open;
-    (component as any).navigateToPhoto(2);
-    // Arrange
-    lightboxService.loopSlideshow = false;
-    component.slideShowRunning = true;
-
-    // Act - try to go to next image from last photo
-    component.nextImage();
-    tick();
-
-    // Assert - should wrap to first photo but slideshow should stop in real scenario
-    // The nextImage method always wraps, but slideshow logic in controls should stop
-    expect(component.NexGridMedia).toBeNull(); // No next media when not looping
-  }));
-
-  it('should continue slideshow from first image when loopSlideshow is enabled', fakeAsync(() => {
-    // Arrange
-    component.status = LightboxStates.Open;
-    (component as any).navigateToPhoto(2); // Navigate to last photo
-    lightboxService.loopSlideshow = true;
-    component.slideShowRunning = true;
-
-    expect(component.NexGridMedia).toBe(photoComponents[0].gridMedia) // Should return first media when looping
-    // Act - go to next image from last photo
-    component.nextImage();
-    tick();
-
-    // Assert - should wrap to first photo and continue slideshow
-    expect(component.NexGridMedia).toBe(photoComponents[1].gridMedia); // Should return first media when looping
-  }));
-
-  it('should stop slideshow when pause button is clicked', fakeAsync(() => {
-    // Arrange
-    component.slideShowRunning = true;
-    (component as any).navigateToPhoto(0);
-
-    // Act
-    lightboxService.playback = false;
-    tick();
-
-    // Assert
-    expect(component.slideShowRunning).toBe(false);
-  }));
-
-  it('should handle slideshow with route params', fakeAsync(() => {
-    // Arrange - spy on public property instead
-    const initialSlideShowState = component.slideShowRunning;
-
-    // Act - simulate playback param in route
-    mockActivatedRoute.queryParams.next({[QueryParams.gallery.lightbox.playback]: 'true'});
-    tick();
-
-    // Assert
-    expect(component.slideShowRunning).toBe(true);
-
-    // Act - simulate removing playback param
-    mockActivatedRoute.queryParams.next({});
-    tick();
-
-    // Assert
-    expect(component.slideShowRunning).toBe(false);
-  }));
-
-  it('should navigate to specific photo and start slideshow', fakeAsync(() => {
-    // Arrange
-    component.status = LightboxStates.Open;
-
-    // Act
-    mockActivatedRoute.queryParams.next({
-      [QueryParams.gallery.photo]: 'photo2.jpg',
-      [QueryParams.gallery.lightbox.playback]: 'true'
+  it('should stop slideshow at last image when loopSlideshow is disabled', async () => {
+    await openPhoto('photo3.jpg', {
+      [QueryParams.gallery.lightbox.playback]: 'true',
+      [QueryParams.gallery.lightbox.loopSlideshow]: 'false'
     });
-    tick();
 
-    // Assert
-    expect(component.slideShowRunning).toBe(true);
-  }));
+    component.nextImage();
+    await settle();
 
-  it('should not advance to next photo when no more photos and loopSlideshow disabled', () => {
-    // Arrange
-    lightboxService.loopSlideshow = false;
-    component.status = LightboxStates.Open;
-    (component as any).navigateToPhoto(2); // Navigate to last photo
-
-    // Act & Assert
-    expect(component.navigation.hasNext).toBe(false);
-    expect(component.NexGridMedia).toBeNull();
+    expect(component.nextMedia()).toBeNull();
+    expect(component.hasNext()).toBe(false);
+    expect(photoParam()).toBe('photo3.jpg');
   });
 
-  it('should advance to first photo when at last photo and loopSlideshow enabled', () => {
-    // Arrange
-    lightboxService.loopSlideshow = true;
-    component.status = LightboxStates.Open;
-    (component as any).navigateToPhoto(2); // Navigate to last photo
+  it('should continue slideshow from first image when loopSlideshow is enabled', async () => {
+    await openPhoto('photo3.jpg', {
+      [QueryParams.gallery.lightbox.playback]: 'true',
+      [QueryParams.gallery.lightbox.loopSlideshow]: 'true'
+    });
+    expect(component.nextMedia()).toBe(photos[0]);
+    expect(component.nextGridMedia()!.media).toBe(photos[0]);
 
-    // Act & Assert
-    expect(component.NexGridMedia).toBe(photoComponents[0].gridMedia);
+    component.nextImage();
+    await settle();
+
+    expect(photoParam()).toBe('photo1.jpg');
+    expect(component.nextMedia()).toBe(photos[1]);
+    expect(component.slideShowRunning()).toBe(true);
+  });
+
+  it('should stop slideshow when pause button is clicked', async () => {
+    await openPhoto('photo1.jpg', {[QueryParams.gallery.lightbox.playback]: 'true'});
+    expect(component.slideShowRunning()).toBe(true);
+
+    mockRouter.navigate([], {queryParams: {[QueryParams.gallery.lightbox.playback]: null}, queryParamsHandling: 'merge'});
+    await settle();
+
+    expect(component.slideShowRunning()).toBe(false);
+  });
+
+  it('should pause the slideshow when going back', async () => {
+    await openPhoto('photo2.jpg', {[QueryParams.gallery.lightbox.playback]: 'true'});
+
+    component.prevImage();
+    await settle();
+
+    expect(photoParam()).toBe('photo1.jpg');
+    expect(component.slideShowRunning()).toBe(false);
+  });
+
+  it('should handle slideshow with route params', async () => {
+    mockActivatedRoute.queryParams.next({[QueryParams.gallery.lightbox.playback]: 'true'});
+    await settle();
+    // a slideshow URL without a photo starts at the first one
+    expect(component.slideShowRunning()).toBe(true);
+    expect(photoParam()).toBe('photo1.jpg');
+
+    mockActivatedRoute.queryParams.next({[QueryParams.gallery.photo]: 'photo1.jpg'});
+    await settle();
+
+    expect(component.slideShowRunning()).toBe(false);
+  });
+
+  it('should navigate to specific photo and start slideshow', async () => {
+    await openPhoto('photo2.jpg', {[QueryParams.gallery.lightbox.playback]: 'true'});
+
+    expect(component.activePhoto()!.media).toBe(photos[1]);
+    expect(component.slideShowRunning()).toBe(true);
+  });
+
+  it('should not advance to next photo when no more photos and loopSlideshow disabled', async () => {
+    await openPhoto('photo3.jpg', {[QueryParams.gallery.lightbox.loopSlideshow]: 'false'});
+
+    expect(component.navigation().hasNext).toBe(false);
+    expect(component.nextGridMedia()).toBeNull();
+    component.nextImage();
+    expect(photoParam()).toBe('photo3.jpg');
+  });
+
+  it('should tell whether there is a previous and a next photo', async () => {
+    await openPhoto('photo1.jpg', {[QueryParams.gallery.lightbox.loopSlideshow]: 'false'});
+    expect(component.navigation()).toEqual({hasPrev: false, hasNext: true});
+
+    await openPhoto('photo2.jpg', {[QueryParams.gallery.lightbox.loopSlideshow]: 'false'});
+    expect(component.navigation()).toEqual({hasPrev: true, hasNext: true});
+
+    await openPhoto('photo3.jpg', {[QueryParams.gallery.lightbox.loopSlideshow]: 'false'});
+    expect(component.navigation()).toEqual({hasPrev: true, hasNext: false});
+  });
+
+  it('should navigate by the content order, also beyond the rendered photos', async () => {
+    const many: PhotoDTO[] = [];
+    for (let i = 0; i < 50; ++i) {
+      many.push(createMockPhoto('p' + i + '.jpg', i));
+    }
+    grid.media.set(many);
+    await openPhoto('p30.jpg');
+
+    component.nextImage();
+    await settle();
+
+    expect(photoParam()).toBe('p31.jpg');
+    expect(grid.revealMedia).toHaveBeenLastCalledWith(many[31]);
+    expect(component.activePhoto()!.media).toBe(many[31]);
+
+    component.prevImage();
+    await settle();
+    component.prevImage();
+    await settle();
+    expect(component.activePhoto()!.media).toBe(many[29]);
+  });
+
+  it('should show the first photo with a toast when the open photo is gone, and keep the slideshow playing', async () => {
+    await openPhoto('photo2.jpg', {[QueryParams.gallery.lightbox.playback]: 'true'});
+
+    // the fresh listing replaces the cached one
+    grid.media.set([photos[0], photos[2]]);
+    await settle();
+
+    expect(notifications.info).toHaveBeenCalledTimes(1);
+    expect(photoParam()).toBe('photo1.jpg');
+    expect(component.activePhoto()!.media).toBe(photos[0]);
+    expect(component.status()).toBe(LightboxStates.Open);
+    expect(component.slideShowRunning()).toBe(true);
+  });
+
+  it('should show the first photo with a toast for a link to a photo that is not there', async () => {
+    await openPhoto('missing.jpg');
+
+    expect(notifications.info).toHaveBeenCalledTimes(1);
+    expect(photoParam()).toBe('photo1.jpg');
+    expect(component.status()).toBe(LightboxStates.Open);
+  });
+
+  it('should close when the content is empty', async () => {
+    await openPhoto('photo2.jpg');
+
+    grid.media.set([]);
+    await settle();
+
+    expect(photoParam()).toBeUndefined();
+    expect(component.status()).toBe(LightboxStates.Closed);
+  });
+
+  it('should wait for the content on a cold link', async () => {
+    grid.media.set(null);
+    await openPhoto('photo3.jpg');
+    expect(grid.revealMedia).not.toHaveBeenCalled();
+    expect(component.status()).toBe(LightboxStates.Closed);
+
+    grid.media.set(photos);
+    await settle();
+
+    expect(grid.revealMedia).toHaveBeenCalledWith(photos[2]);
+    expect(component.status()).toBe(LightboxStates.Open);
+    expect(component.activePhoto()!.media).toBe(photos[2]);
+    expect(notifications.info).not.toHaveBeenCalled();
+  });
+
+  it('should reveal the open photo in the grid on close', async () => {
+    await openPhoto('photo1.jpg');
+    component.nextImage();
+    await settle();
+    grid.revealMedia.mockClear();
+
+    component.hide();
+    await settle();
+
+    expect(grid.revealMedia).toHaveBeenCalledTimes(1);
+    expect(grid.revealMedia).toHaveBeenCalledWith(photos[1]);
+    expect(component.status()).toBe(LightboxStates.Closed);
+    expect(component.activePhoto()).toBeNull();
   });
 
   it('should release the scroll lock and full screen when destroyed while open', () => {
     const overlayService = TestBed.inject(OverlayService);
     const fullScreenService = TestBed.inject(FullScreenService);
-    spyOn(overlayService, 'hideOverlay');
-    spyOn(fullScreenService, 'exitFullScreen');
-    component.status = LightboxStates.Open;
+    vi.spyOn(overlayService, 'hideOverlay').mockImplementation(() => undefined);
+    vi.spyOn(fullScreenService, 'exitFullScreen').mockImplementation(() => undefined);
+    component.status.set(LightboxStates.Open);
 
     fixture.destroy();
 
     expect(overlayService.hideOverlay).toHaveBeenCalledWith('lightbox');
     expect(fullScreenService.exitFullScreen).toHaveBeenCalled();
+    vi.restoreAllMocks();
   });
 
   it('should not touch the scroll lock when destroyed while closed', () => {
     const overlayService = TestBed.inject(OverlayService);
-    spyOn(overlayService, 'hideOverlay');
-    component.status = LightboxStates.Closed;
+    vi.spyOn(overlayService, 'hideOverlay').mockImplementation(() => undefined);
+    component.status.set(LightboxStates.Closed);
 
     fixture.destroy();
 
     expect(overlayService.hideOverlay).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
   });
 });

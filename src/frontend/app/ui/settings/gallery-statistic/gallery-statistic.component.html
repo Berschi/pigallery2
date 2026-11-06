@@ -3,24 +3,25 @@
     Statistic:
   </div>
   <div class="col-md-2 col-6">
-    <ng-icon name="ionFolderOutline" title="Folders" i18n-title></ng-icon>
-    {{settingsService.statistic.value ? settingsService.statistic.value.directories : '...'}}
+    <ng-icon name="ionFolderOutline" title="Folders" i18n-title />
+    {{settingsService.statistic()?.directories ?? '...'}}
   </div>
   <div class="col-md-2 col-6">
-    <ng-icon name="ionCameraOutline" title="Photos" i18n-title></ng-icon>
-    {{settingsService.statistic.value ? settingsService.statistic.value.photos : '...'}}
+    <ng-icon name="ionCameraOutline" title="Photos" i18n-title />
+    {{settingsService.statistic()?.photos ?? '...'}}
   </div>
   <div class="col-md-2 col-6">
-    <ng-icon name="ionVideocamOutline" title="Videos" i18n-title></ng-icon>
-    {{settingsService.statistic.value ? settingsService.statistic.value.videos : '...'}}
+    <ng-icon name="ionVideocamOutline" title="Videos" i18n-title />
+    {{settingsService.statistic()?.videos ?? '...'}}
 
   </div>
   <div class="col-md-2 col-6">
-    <ng-icon name="ionPersonOutline" title="Persons" i18n-title></ng-icon>
-    {{settingsService.statistic.value ? settingsService.statistic.value.persons : '...'}}
+    <ng-icon name="ionPersonOutline" title="Persons" i18n-title />
+    {{settingsService.statistic()?.persons ?? '...'}}
   </div>
   <div class="col-md-2 col-6">
-    <ng-icon name="ionPieChartOutline" title="Size" i18n-title></ng-icon>
-    {{settingsService.statistic.value ? (settingsService.statistic.value.diskUsage | fileSize) : '...'}}
+    <ng-icon name="ionPieChartOutline" title="Size" i18n-title />
+    @let statistic = settingsService.statistic();
+    {{statistic ? (statistic.diskUsage | fileSize) : '...'}}
   </div>
 </div>

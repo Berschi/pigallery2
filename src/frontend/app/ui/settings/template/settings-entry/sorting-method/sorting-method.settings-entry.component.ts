@@ -1,11 +1,11 @@
-import {Component, forwardRef, Input, OnInit} from '@angular/core';
-import {ControlValueAccessor, NG_VALIDATORS, NG_VALUE_ACCESSOR, ValidationErrors, Validator} from '@angular/forms';
+import { Component, forwardRef, OnInit, inject, input, computed, signal } from '@angular/core';
+import {ControlValueAccessor, NG_VALIDATORS, NG_VALUE_ACCESSOR, type ValidationErrors, Validator} from '@angular/forms';
 import {SortByDirectionalTypes, SortingMethod} from '../../../../../../../common/entities/SortingMethods';
 import {enumToTranslatedArray} from '../../../../EnumTranslations';
 import {AutoCompleteService} from '../../../../gallery/search/autocomplete.service';
 import {Utils} from '../../../../../../../common/Utils';
 import {BsDropdownDirective, BsDropdownMenuDirective, BsDropdownToggleDirective} from 'ngx-bootstrap/dropdown';
-import {NgFor, NgIf} from '@angular/common';
+
 import {NgIconComponent} from '@ng-icons/core';
 import {SortingMethodIconComponent} from '../../../../utils/sorting-method-icon/sorting-method-icon.component';
 import {StringifySortingMethod} from '../../../../../pipes/StringifySortingMethod';
@@ -14,7 +14,7 @@ import {NotificationService} from '../../../../../model/notification.service';
 @Component({
   selector: 'app-settings-entry-sorting-method',
   templateUrl: './sorting-method.settings-entry.component.html',
-  styleUrls: ['./sorting-method.settings-entry.component.css'],
+  styleUrl: './sorting-method.settings-entry.component.css',
   providers: [
     AutoCompleteService,
     {
@@ -31,26 +31,32 @@ import {NotificationService} from '../../../../../model/notification.service';
   imports: [
     BsDropdownDirective,
     BsDropdownToggleDirective,
-    NgIf,
     NgIconComponent,
     SortingMethodIconComponent,
     BsDropdownMenuDirective,
-    NgFor,
-    StringifySortingMethod,
-  ]
+    StringifySortingMethod
+]
 })
 export class SortingMethodSettingsEntryComponent
   implements ControlValueAccessor, Validator, OnInit {
-  @Input() sortingByEnum: Record<string, number | string> & { [k: number]: string };
+  private notificationService = inject(NotificationService);
 
-  public sortingMethod: SortingMethod;
+  readonly sortingByEnum = input<Record<string, number | string> & Record<number, string>>();
+
+  /**
+   * The edited value (part of the settings tree), it is changed in place.
+   */
+  private model: SortingMethod;
+  /**
+   * A copy of the model for the view, replaced on every change.
+   */
+  public readonly sortingMethod = signal<SortingMethod | undefined>(undefined);
+  public readonly isBidirectional = computed<boolean>(() =>
+    this.isBidirectionalMethod(this.sortingMethod()?.method));
   public sortingByTypes: { key: number; value: string }[] = [];
 
-  constructor(private notificationService: NotificationService) {
-  }
-
   ngOnInit(): void {
-    this.sortingByTypes = enumToTranslatedArray(this.sortingByEnum);
+    this.sortingByTypes = enumToTranslatedArray(this.sortingByEnum() ?? {});
   }
 
   public onTouched(): void {
@@ -58,7 +64,8 @@ export class SortingMethodSettingsEntryComponent
   }
 
   public writeValue(obj: SortingMethod): void {
-    this.sortingMethod = obj;
+    this.model = obj;
+    this.updateView();
   }
 
   registerOnChange(fn: (_: unknown) => void): void {
@@ -70,24 +77,29 @@ export class SortingMethodSettingsEntryComponent
   }
 
   public onChange(): void {
-    this.propagateChange(this.sortingMethod);
+    this.updateView();
+    this.propagateChange(this.model);
   }
 
   validate(): ValidationErrors {
     return {required: true};
   }
 
-  public isBidirectional(value: number) {
-    return Utils.isValidEnumInt(SortByDirectionalTypes, value);
+  private isBidirectionalMethod(value: number | undefined): boolean {
+    return value !== undefined && Utils.isValidEnumInt(SortByDirectionalTypes, value);
+  }
+
+  private updateView(): void {
+    this.sortingMethod.set(this.model ? {method: this.model.method, ascending: this.model.ascending} : this.model);
   }
 
   setSortingBy(key: number): void {
     try {
-      this.sortingMethod.method = key;
-      if (!this.isBidirectional(key)) { // included in enum
-        this.sortingMethod.ascending = null;
-      } else if (this.sortingMethod.ascending == null) {
-        this.sortingMethod.ascending = true;
+      this.model.method = key;
+      if (!this.isBidirectionalMethod(key)) { // included in enum
+        this.model.ascending = null;
+      } else if (this.model.ascending == null) {
+        this.model.ascending = true;
       }
       this.onChange();
     } catch (e) {
@@ -96,11 +108,10 @@ export class SortingMethodSettingsEntryComponent
   }
 
   setSortingAscending(ascending: boolean): void {
-    this.sortingMethod.ascending = ascending;
+    this.model.ascending = ascending;
     this.onChange();
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private propagateChange = (_: SortingMethod): void => {
     //ignoring
   };

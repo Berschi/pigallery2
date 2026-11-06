@@ -1,4 +1,3 @@
-/* eslint-disable no-unused-expressions,@typescript-eslint/no-unused-expressions */
 import * as path from 'path';
 import {expect} from 'chai';
 import {Config} from '../../../../src/common/config/private/Config';
@@ -15,6 +14,7 @@ import {SessionContext} from '../../../../src/backend/model/SessionContext';
 import {AuthenticationMWs} from '../../../../src/backend/middlewares/user/AuthenticationMWs';
 import {ErrorCodes, ErrorDTO} from '../../../../src/common/entities/Error';
 import {DirectorySearch, SearchQueryTypes, TextSearchQueryMatchTypes} from '../../../../src/common/entities/SearchQueryDTO';
+import {TestHelper} from '../../../TestHelper';
 
 declare const before: any;
 declare const beforeEach: any;
@@ -54,8 +54,8 @@ function makeVideo(name: string, dirPath: string, dirName: string, contentIdenti
 }
 
 describe('GalleryMWs', () => {
+  before(TestHelper.resetConfig);
   before(() => {
-    Config.loadSync();
     Config.Database.type = DatabaseType.sqlite;
     Config.Extensions.enabled = false;
   });

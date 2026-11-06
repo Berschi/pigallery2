@@ -1,21 +1,21 @@
-import {Component, ElementRef, Input, OnDestroy, OnInit, ViewChild,} from '@angular/core';
-import {Dimension, IRenderable} from '../../../../model/IRenderable';
+import { Component, ElementRef, OnDestroy, OnInit, computed, inject, viewChild, input, signal } from '@angular/core';
+import {type Dimension, IRenderable} from '../../../../model/IRenderable';
 import {GridMedia} from '../GridMedia';
 import {RouterLink} from '@angular/router';
 import {Thumbnail, ThumbnailManagerService,} from '../../thumbnailManager.service';
 import {Config} from '../../../../../../common/config/public/Config';
 import {PageHelper} from '../../../../model/page.helper';
 import {PhotoDTO, PhotoMetadata,} from '../../../../../../common/entities/PhotoDTO';
-import {SearchQueryTypes, TextSearch, TextSearchQueryMatchTypes,} from '../../../../../../common/entities/SearchQueryDTO';
+import {SearchQueryTypes} from '../../../../../../common/entities/SearchQueryDTO';
 import {AuthenticationService} from '../../../../model/network/authentication.service';
 import {ExtensionService} from '../../../../model/extension.service';
 import {MediaButtonModalService} from './media-button-modal/media-button-modal.service';
-import {NgFor, NgIf, NgSwitch, NgSwitchCase} from '@angular/common';
+
 import {GalleryPhotoLoadingComponent} from './loading/loading.photo.grid.gallery.component';
 import {NgIconComponent} from '@ng-icons/core';
 import {DurationPipe} from '../../../../pipes/DurationPipe';
 import {SafeHtmlPipe} from '../../../../pipes/SafeHTMLPipe';
-import {IClientMediaButtonConfig} from '../../../../../../common/entities/extension/IClientUIConfig';
+import type {IClientMediaButtonConfig, IMetadataFilter} from '../../../../../../common/entities/extension/IClientUIConfig';
 import {Utils} from '../../../../../../common/Utils';
 import {SearchQueryUtils} from '../../../../../../common/SearchQueryUtils';
 
@@ -26,63 +26,110 @@ export interface IClientMediaButtonConfigWithBaseApiPath extends IClientMediaBut
 @Component({
   selector: 'app-gallery-grid-photo',
   templateUrl: './photo.grid.gallery.component.html',
-  styleUrls: ['./photo.grid.gallery.component.css'],
+  styleUrl: './photo.grid.gallery.component.css',
   imports: [
-    NgIf,
     GalleryPhotoLoadingComponent,
     NgIconComponent,
     RouterLink,
-    NgFor,
-    NgSwitch,
-    NgSwitchCase,
     DurationPipe,
-    SafeHtmlPipe,
-  ]
+    SafeHtmlPipe
+]
 })
 export class GalleryPhotoComponent implements IRenderable, OnInit, OnDestroy {
-  @Input() gridMedia: GridMedia;
-  @ViewChild('img', {static: false}) imageRef: ElementRef;
-  @ViewChild('photoContainer', {static: true}) container: ElementRef;
+  private thumbnailService = inject(ThumbnailManagerService);
+  private authService = inject(AuthenticationService);
+  private extensionService = inject(ExtensionService);
+  private modalService = inject(MediaButtonModalService);
+  private elementRef = inject<ElementRef<HTMLElement>>(ElementRef);
+
+  readonly gridMedia = input.required<GridMedia>();
+  readonly imageRef = viewChild<ElementRef>('img');
+  readonly container = viewChild.required<ElementRef>('photoContainer');
 
   thumbnail: Thumbnail;
-  keywords: { value: string; type: SearchQueryTypes }[] = null;
-  infoBarVisible = false;
-  animationTimer: number = null;
+  readonly infoBarVisible = signal(false);
+  animationTimer: number | null = null;
 
   readonly SearchQueryTypes: typeof SearchQueryTypes = SearchQueryTypes;
   searchEnabled = true;
 
-  wasInView: boolean = null;
+  wasInView: boolean | null = null;
   loaded = false;
   public mediaButtons: IClientMediaButtonConfigWithBaseApiPath[];
 
-  constructor(
-    private thumbnailService: ThumbnailManagerService,
-    private authService: AuthenticationService,
-    private extensionService: ExtensionService,
-    private modalService: MediaButtonModalService
-  ) {
+  readonly isVideo = computed((): boolean => this.gridMedia().isVideo());
+  readonly isLivePhoto = computed((): boolean => this.gridMedia().isLivePhoto());
+  readonly hasPositionData = computed((): boolean => this.gridMedia().hasPositionData());
+
+  readonly title = computed((): string => {
+    if (Config.Gallery.captionFirstNaming === false) {
+      return this.gridMedia().media.name;
+    }
+    const caption = (this.gridMedia().media as PhotoDTO).metadata.caption;
+    if (caption) {
+      if (caption.length > 20) {
+        return (
+          caption.substring(0, 17) +
+          '...'
+        );
+      }
+      return caption;
+    }
+    return this.gridMedia().media.name;
+  });
+
+  // the faces and keywords of the media with their search links, null if it has none
+  readonly keywords = computed((): { value: string; type: SearchQueryTypes; link: string }[] | null => {
+    const metadata = this.gridMedia().media.metadata as PhotoMetadata;
+    if (
+      !(metadata.keywords && metadata.keywords.length > 0) &&
+      !(metadata.faces && metadata.faces.length > 0)
+    ) {
+      return null;
+    }
+    let keywords: { value: string; type: SearchQueryTypes }[] = [];
+    if (Config.Faces.enabled) {
+      const names: string[] = (metadata.faces || []).map(
+        (f): string => f.name
+      );
+      keywords = names
+        .filter((name, index): boolean => names.indexOf(name) === index)
+        .map((n): { type: SearchQueryTypes; value: string } => ({
+          value: n,
+          type: SearchQueryTypes.person,
+        }));
+    }
+    return keywords.concat(
+      (metadata.keywords || []).map(
+        (k): { type: SearchQueryTypes; value: string } => ({
+          value: k,
+          type: SearchQueryTypes.keyword,
+        })
+      )
+    ).map(k => ({...k, link: SearchQueryUtils.urlifyExactMatch(k.type, k.value)}));
+  });
+
+  readonly positionText = computed((): string => {
+    const gridMedia = this.gridMedia();
+    const positionData = (gridMedia?.media as PhotoDTO | undefined)?.metadata.positionData;
+    if (!gridMedia || !gridMedia.isPhoto() || !positionData) {
+      return '';
+    }
+    return ( //not much space in the gridview, so we only deliver city, or state or country
+      positionData.city ||
+      positionData.state ||
+      positionData.country || ''
+    ).trim();
+  });
+
+  readonly positionLink = computed((): string => SearchQueryUtils.urlifyExactMatch(SearchQueryTypes.position, this.positionText()));
+
+  constructor() {
     this.searchEnabled = this.authService.canSearch();
   }
 
   get ScrollListener(): boolean {
     return !this.thumbnail.Available && !this.thumbnail.Error;
-  }
-
-  get Title(): string {
-    if (Config.Gallery.captionFirstNaming === false) {
-      return this.gridMedia.media.name;
-    }
-    if ((this.gridMedia.media as PhotoDTO).metadata.caption) {
-      if ((this.gridMedia.media as PhotoDTO).metadata.caption.length > 20) {
-        return (
-          (this.gridMedia.media as PhotoDTO).metadata.caption.substring(0, 17) +
-          '...'
-        );
-      }
-      return (this.gridMedia.media as PhotoDTO).metadata.caption;
-    }
-    return this.gridMedia.media.name;
   }
 
   updateMediaButtons(): void {
@@ -104,10 +151,11 @@ export class GalleryPhotoComponent implements IRenderable, OnInit, OnDestroy {
     });
 
     this.mediaButtons = allButtons.filter(button => {
-      if (this.gridMedia.isVideo() && button.skipVideos) {
+      const gridMedia = this.gridMedia();
+      if (gridMedia.isVideo() && button.skipVideos) {
         return false;
       }
-      if (this.gridMedia.isPhoto() && button.skipPhotos) {
+      if (gridMedia.isPhoto() && button.skipPhotos) {
         return false;
       }
 
@@ -123,24 +171,25 @@ export class GalleryPhotoComponent implements IRenderable, OnInit, OnDestroy {
     this.mediaButtons = [...this.mediaButtons.filter(b => b.alwaysVisible), ...this.mediaButtons.filter(b => !b.alwaysVisible)];
   }
 
-  matchesMetadataFilter(filters: { field: string, comparator: '>=' | '<=' | '==', value: string | number }[]): boolean {
-    const metadata = this.gridMedia.media.metadata;
+  matchesMetadataFilter(filters: IMetadataFilter[]): boolean {
+    const metadata = this.gridMedia().media.metadata;
 
     // All filters must match (AND logic)
     return filters.every(filter => {
       // Get the value from metadata using the field path (e.g., 'rating' or 'size.width')
       const fieldParts = filter.field.split('.');
-      let fieldValue: any = metadata;
+      let fieldValue: unknown = metadata;
 
       for (const part of fieldParts) {
         if (fieldValue === undefined || fieldValue === null) {
-          return false;
+          break;
         }
-        fieldValue = fieldValue[part];
+        fieldValue = (fieldValue as Record<string, unknown>)[part];
       }
 
       if (fieldValue === undefined || fieldValue === null) {
-        return false;
+        // A missing field (e.g. a photo without keywords) does not contain anything
+        return filter.comparator === '!contains';
       }
 
       // Compare based on comparator
@@ -151,41 +200,31 @@ export class GalleryPhotoComponent implements IRenderable, OnInit, OnDestroy {
           return fieldValue <= filter.value;
         case '==':
           return fieldValue == filter.value; // Use == for loose equality
+        case 'contains':
+          return GalleryPhotoComponent.contains(fieldValue, filter.value);
+        case '!contains':
+          return !GalleryPhotoComponent.contains(fieldValue, filter.value);
         default:
           return false;
       }
     });
   }
 
-  ngOnInit(): void {
-    this.thumbnail = this.thumbnailService.getThumbnail(this.gridMedia);
-    const metadata = this.gridMedia.media.metadata as PhotoMetadata;
-    if (
-      (metadata.keywords && metadata.keywords.length > 0) ||
-      (metadata.faces && metadata.faces.length > 0)
-    ) {
-      this.keywords = [];
-      if (Config.Faces.enabled) {
-        const names: string[] = (metadata.faces || []).map(
-          (f): string => f.name
-        );
-        this.keywords = names
-          .filter((name, index): boolean => names.indexOf(name) === index)
-          .map((n): { type: SearchQueryTypes; value: string } => ({
-            value: n,
-            type: SearchQueryTypes.person,
-          }));
-      }
-      this.keywords = this.keywords.concat(
-        (metadata.keywords || []).map(
-          (k): { type: SearchQueryTypes; value: string } => ({
-            value: k,
-            type: SearchQueryTypes.keyword,
-          })
-        )
-      );
+  /**
+   * Arrays (e.g. keywords): exact item match. Strings (e.g. caption): substring match.
+   */
+  private static contains(fieldValue: unknown, value: string | number): boolean {
+    if (Array.isArray(fieldValue)) {
+      return fieldValue.some(item => item == value); // Use == for loose equality
     }
+    if (typeof fieldValue === 'string') {
+      return fieldValue.includes(String(value));
+    }
+    return false;
+  }
 
+  ngOnInit(): void {
+    this.thumbnail = this.thumbnailService.getThumbnail(this.gridMedia());
     this.updateMediaButtons();
   }
 
@@ -200,10 +239,10 @@ export class GalleryPhotoComponent implements IRenderable, OnInit, OnDestroy {
   isInView(): boolean {
     return (
       PageHelper.ScrollY <
-      this.container.nativeElement.offsetTop +
-      this.container.nativeElement.clientHeight &&
+      this.container().nativeElement.offsetTop +
+      this.container().nativeElement.clientHeight &&
       PageHelper.ScrollY + window.innerHeight >
-      this.container.nativeElement.offsetTop
+      this.container().nativeElement.offsetTop
     );
   }
 
@@ -218,35 +257,8 @@ export class GalleryPhotoComponent implements IRenderable, OnInit, OnDestroy {
     }
   }
 
-  getPositionSearchQuery(): string {
-    return SearchQueryUtils.urlify({
-      type: SearchQueryTypes.position,
-      matchType: TextSearchQueryMatchTypes.exact_match,
-      value: this.getPositionText(),
-    } as TextSearch);
-  }
-
-  getTextSearchQuery(name: string, type: SearchQueryTypes): string {
-    return SearchQueryUtils.urlify({
-      type,
-      matchType: TextSearchQueryMatchTypes.exact_match,
-      value: name,
-    } as TextSearch);
-  }
-
-  getPositionText(): string {
-    if (!this.gridMedia || !this.gridMedia.isPhoto() || !(this.gridMedia.media as PhotoDTO).metadata.positionData) {
-      return '';
-    }
-    return ( //not much space in the gridview, so we only deliver city, or state or country
-      (this.gridMedia.media as PhotoDTO).metadata.positionData.city ||
-      (this.gridMedia.media as PhotoDTO).metadata.positionData.state ||
-      (this.gridMedia.media as PhotoDTO).metadata.positionData.country || ''
-    ).trim();
-  }
-
   mouseOver(): void {
-    this.infoBarVisible = true;
+    this.infoBarVisible.set(true);
     if (this.animationTimer != null) {
       clearTimeout(this.animationTimer);
       this.animationTimer = null;
@@ -259,7 +271,7 @@ export class GalleryPhotoComponent implements IRenderable, OnInit, OnDestroy {
     }
     this.animationTimer = window.setTimeout((): void => {
       this.animationTimer = null;
-      this.infoBarVisible = false;
+      this.infoBarVisible.set(false);
     }, 500);
   }
 
@@ -272,14 +284,16 @@ export class GalleryPhotoComponent implements IRenderable, OnInit, OnDestroy {
     }
 
     if (button.popup) {
-      this.modalService.showModal(button, this.gridMedia);
+      this.modalService.showModal(button, this.gridMedia());
     } else {
-      this.modalService.executeButtonAction(button, this.gridMedia);
+      this.modalService.executeButtonAction(button, this.gridMedia());
     }
   }
 
+  // the position of the tile in the page; also while its thumbnail is loading (no <img> yet)
   public getDimension(): Dimension {
-    if (!this.imageRef?.nativeElement?.offsetParent) {
+    const host = this.elementRef.nativeElement;
+    if (!host.offsetParent) {
       return {
         top: 0,
         left: 0,
@@ -287,11 +301,12 @@ export class GalleryPhotoComponent implements IRenderable, OnInit, OnDestroy {
         height: 0,
       };
     }
+    const image = this.imageRef()?.nativeElement as HTMLImageElement;
     return {
-      top: this.imageRef.nativeElement.offsetParent.offsetTop,
-      left: this.imageRef.nativeElement.offsetParent.offsetLeft,
-      width: this.imageRef.nativeElement.width,
-      height: this.imageRef.nativeElement.height,
+      top: host.offsetTop,
+      left: host.offsetLeft,
+      width: image ? image.width : this.gridMedia().renderWidth,
+      height: image ? image.height : this.gridMedia().renderHeight,
     };
   }
 }

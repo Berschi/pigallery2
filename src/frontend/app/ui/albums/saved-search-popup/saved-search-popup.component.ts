@@ -1,6 +1,6 @@
-import {Component, Input, TemplateRef} from '@angular/core';
+import { Component, TemplateRef, inject, input } from '@angular/core';
 import {BsModalService} from 'ngx-bootstrap/modal';
-import {BsModalRef} from 'ngx-bootstrap/modal/bs-modal-ref.service';
+import {BsModalRef} from 'ngx-bootstrap/modal';
 import {SearchQueryDTO} from '../../../../../common/entities/SearchQueryDTO';
 import { NgIconComponent } from '@ng-icons/core';
 import { JsonPipe } from '@angular/common';
@@ -8,24 +8,26 @@ import { JsonPipe } from '@angular/common';
 @Component({
     selector: 'app-saved-search-popup-btn',
     templateUrl: './saved-search-popup.component.html',
-    styleUrls: ['./saved-search-popup.component.css'],
+    styleUrl: './saved-search-popup.component.css',
     imports: [NgIconComponent, JsonPipe]
 })
 export class SavedSearchPopupComponent {
-  @Input() disabled: boolean;
-  @Input() savedSearchDTO: { name: string; searchQuery: SearchQueryDTO };
-  private modalRef: BsModalRef;
+  private modalService = inject(BsModalService);
 
-  constructor(private modalService: BsModalService) {
-  }
+  readonly disabled = input<boolean>();
+  readonly savedSearchDTO = input<{
+    name: string;
+    searchQuery: SearchQueryDTO;
+}>();
+  private modalRef: BsModalRef | null;
 
-  public async openModal(template: TemplateRef<any>): Promise<void> {
+  public async openModal(template: TemplateRef<unknown>): Promise<void> {
     this.modalRef = this.modalService.show(template, {class: 'modal-lg'});
     document.body.style.paddingRight = '0px';
   }
 
   public hideModal(): void {
-    this.modalRef.hide();
+    this.modalRef?.hide();
     this.modalRef = null;
   }
 }

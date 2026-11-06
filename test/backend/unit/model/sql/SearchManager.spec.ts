@@ -32,14 +32,12 @@ import {Config} from '../../../../../src/common/config/private/Config';
 import {SearchQueryParser} from '../../../../../src/common/SearchQueryParser';
 import {FileDTO} from '../../../../../src/common/entities/FileDTO';
 import {SortByTypes} from '../../../../../src/common/entities/SortingMethods';
-import {ContextUser, SessionContext} from '../../../../../src/backend/model/SessionContext';
+import {SessionUser, SessionContext} from '../../../../../src/backend/model/SessionContext';
 import {UserRoles} from '../../../../../src/common/entities/UserDTO';
 import {UserEntity} from '../../../../../src/backend/model/database/enitites/UserEntity';
 import {SharingEntity} from '../../../../../src/backend/model/database/enitites/SharingEntity';
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const deepEqualInAnyOrder = require('deep-equal-in-any-order');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const chai = require('chai');
 
 chai.use(deepEqualInAnyOrder);
@@ -63,6 +61,7 @@ class SearchManagerTest extends SearchManager {
 
 
 describe('SearchManager', (sqlHelper: DBTestHelper) => {
+  before(TestHelper.resetConfig);
   describe = tmpDescribe;
   /**
    * dir  <-- root: '.'
@@ -149,7 +148,7 @@ describe('SearchManager', (sqlHelper: DBTestHelper) => {
 
   after(sqlHelper.clearDB);
   beforeEach(() => {
-    Config.loadSync();
+    sqlHelper.resetConfig();
     Config.Search.listDirectories = true;
     Config.Search.listMetafiles = false;
   });
@@ -302,7 +301,7 @@ describe('SearchManager', (sqlHelper: DBTestHelper) => {
 
 
     describe('autocomplete', () => {
-      beforeEach(() => Config.loadSync());
+      beforeEach(sqlHelper.resetConfig);
 
       it('autocomplete should respect projectionQuery', async () => {
         const sm = new SearchManager();
@@ -487,7 +486,7 @@ describe('SearchManager', (sqlHelper: DBTestHelper) => {
 
   describe('advanced search', () => {
     beforeEach(async () => {
-      Config.loadSync();
+      sqlHelper.resetConfig();
       Config.Search.listDirectories = false;
       Config.Search.listMetafiles = false;
     });
@@ -1135,7 +1134,6 @@ describe('SearchManager', (sqlHelper: DBTestHelper) => {
         }
       };
 
-      // eslint-disable-next-line @typescript-eslint/prefer-for-of
       for (let i = 1; i < alphabet.length / 2; ++i) {
         const query: SomeOfSearchQuery = {
           type: SearchQueryTypes.SOME_OF,
@@ -1258,6 +1256,20 @@ describe('SearchManager', (sqlHelper: DBTestHelper) => {
     });
 
     describe('should search text', () => {
+      it('should reject query without value', async () => {
+        const sm = new SearchManager();
+        // e.g. legacy saved search with 'text' instead of 'value'
+        const query = {text: 'Landscape', type: SearchQueryTypes.keyword} as unknown as TextSearch;
+        let error: Error = null;
+        try {
+          await sm.search(DBTestHelper.defaultSession, query);
+        } catch (e) {
+          error = e;
+        }
+        expect(error).to.be.instanceOf(Error);
+        expect(error.message).to.contain('Invalid search query');
+      });
+
       it('as any', async () => {
         const sm = new SearchManager();
 
@@ -1769,7 +1781,7 @@ describe('SearchManager', (sqlHelper: DBTestHelper) => {
       let sm: SearchManager;
 
       before(async () => {
-        Config.loadSync();
+        sqlHelper.resetConfig();
         await sqlHelper.clearDB();
         await setUpSqlDB();
         p5 = TestHelper.getBasePhotoEntry(subDir2, 'p5-23h-ago.jpg');
@@ -1778,10 +1790,10 @@ describe('SearchManager', (sqlHelper: DBTestHelper) => {
         p6 = TestHelper.getBasePhotoEntry(subDir2, 'p6-300d-ago.jpg');
         p6.metadata.creationDate = Date.now() - 60 * 60 * 24 * 300 * 1000;
         //p6.metadata.creationDateOffset = "+02:00";
-        p7 = TestHelper.getBasePhotoEntry(subDir2, 'p7-1y-1min-ago.jpg');
+        p7 = TestHelper.getBasePhotoEntry(subDir2, 'p7-1y-ago.jpg');
+        // exactly 1 year ago keeps today's day; the every-year patterns match by day
         const d = new Date();
         d.setUTCFullYear(d.getUTCFullYear() - 1);
-        d.setUTCMinutes(d.getUTCMinutes() - 1);
         p7.metadata.creationDate = d.getTime();
         //p7.metadata.creationDateOffset = "+02:00";
 
@@ -1800,7 +1812,6 @@ describe('SearchManager', (sqlHelper: DBTestHelper) => {
         sm = new SearchManager();
       });
 
-      //TODO: this is flaky test for mysql
       it('last-0-days:every-year', async () => {
 
 
@@ -1837,7 +1848,6 @@ describe('SearchManager', (sqlHelper: DBTestHelper) => {
 
       });
 
-      //TODO: this is flaky test for mysql
       it('last-1-days:every-year', async () => {
         let query: DatePatternSearch = {
           daysLength: 1,
@@ -2109,7 +2119,6 @@ describe('SearchManager', (sqlHelper: DBTestHelper) => {
       type: SearchQueryTypes.keyword
     } as TextSearch;
 
-    // eslint-disable-next-line
     expect(await sm.getNMedia(DBTestHelper.defaultSession, query, [{
       method: SortByTypes.Random,
       ascending: null
@@ -2161,14 +2170,14 @@ describe('SearchManager', (sqlHelper: DBTestHelper) => {
       ({type: SearchQueryTypes.file_name, value, matchType: TextSearchQueryMatchTypes.like});
     const anyPhoto = fileName('Photo');
 
-    const buildSession = (u: Partial<ContextUser>): Promise<SessionContext> =>
+    const buildSession = (u: Partial<SessionUser>): Promise<SessionContext> =>
       ObjectManagers.getInstance().SessionManager.buildContext({
         id: 1,
         name: 'user',
         role: UserRoles.User,
         overrideAllowBlockList: true,
         ...u
-      } as ContextUser);
+      } as SessionUser);
 
     const sharingSession = (s: Partial<SharingEntity>): Promise<SessionContext> => {
       const sm = ObjectManagers.getInstance().SessionManager;

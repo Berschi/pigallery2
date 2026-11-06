@@ -1,4 +1,3 @@
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 import {DBTestHelper} from '../../../DBTestHelper';
 import {Connection} from 'typeorm';
 import {SessionContext} from '../../../../../src/backend/model/SessionContext';
@@ -10,9 +9,9 @@ import {JobRepository} from '../../../../../src/backend/model/jobs/JobRepository
 import {Config} from '../../../../../src/common/config/private/Config';
 import {UserEntity} from '../../../../../src/backend/model/database/enitites/UserEntity';
 import {UserDTO} from '../../../../../src/common/entities/UserDTO';
+import {TestHelper} from '../../../../TestHelper';
 
 const deepEqualInAnyOrder = require('deep-equal-in-any-order');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const chai = require('chai');
 
 chai.use(deepEqualInAnyOrder);
@@ -22,14 +21,13 @@ const {expect} = chai;
 declare let describe: any;
 declare const before: any;
 declare const after: any;
-declare const beforeEach: any;
-declare const afterEach: any;
 declare const it: any;
 const tmpDescribe = describe;
 describe = DBTestHelper.describe();
 
 
 describe('AlbumCoverFillingJob', (sqlHelper: DBTestHelper) => {
+  before(TestHelper.resetConfig);
   describe = tmpDescribe;
 
   let connection: Connection;
@@ -119,11 +117,11 @@ describe('AlbumCoverFillingJob', (sqlHelper: DBTestHelper) => {
       expect(cacheCalls).to.equal(sessions.length * dirs.length, 'Cache should be built for each session-directory pair');
 
       // Check a couple of argument shapes to ensure proper call order
-      for (let i = 0; i < cacheArgs.length; i++) {
+      for (const args of cacheArgs) {
         // args: (conn, session, directory)
-        expect(cacheArgs[i][0]).to.equal(connection);
-        expect(sessions).to.include(cacheArgs[i][1]);
-        expect(dirs.map(d => d.id)).to.include(cacheArgs[i][2].id);
+        expect(args[0]).to.equal(connection);
+        expect(sessions).to.include(args[1]);
+        expect(dirs.map(d => d.id)).to.include(args[2].id);
       }
     } finally {
       // Restore stubs

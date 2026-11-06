@@ -8,9 +8,7 @@ export class JobProgressManager {
   private static readonly VERSION = 3;
   private db: {
     version: number;
-    progresses: {
-      [key: string]: { progress: JobProgressDTO; timestamp: number };
-    };
+    progresses: Record<string, { progress: JobProgressDTO; timestamp: number }>;
   } = {
     version: JobProgressManager.VERSION,
     progresses: {},
@@ -23,8 +21,8 @@ export class JobProgressManager {
     this.loadDB().catch(console.error);
   }
 
-  get Progresses(): { [key: string]: JobProgressDTO } {
-    const m: { [key: string]: JobProgressDTO } = {};
+  get Progresses(): Record<string, JobProgressDTO> {
+    const m: Record<string, JobProgressDTO> = {};
     for (const key of Object.keys(this.db.progresses)) {
       m[key] = this.db.progresses[key].progress;
       if (
@@ -41,10 +39,22 @@ export class JobProgressManager {
     this.delayedSave();
   }
 
+  /**
+   * Writes out a pending delayed save, so it does not fire after shutdown.
+   */
+  async cleanUp(): Promise<void> {
+    if (this.timer === null) {
+      return;
+    }
+    clearTimeout(this.timer);
+    this.timer = null;
+    await this.saveDB().catch(console.error);
+  }
+
   private async loadDB(): Promise<void> {
     try {
       await fsp.access(this.dbPath);
-    } catch (e) {
+    } catch {
       return;
     }
     const data = await fsp.readFile(this.dbPath, 'utf8');
@@ -81,6 +91,7 @@ export class JobProgressManager {
   }
 
   private async saveDB(): Promise<void> {
+    await fsp.mkdir(path.dirname(this.dbPath), {recursive: true});
     await fsp.writeFile(this.dbPath, JSON.stringify(this.db));
   }
 

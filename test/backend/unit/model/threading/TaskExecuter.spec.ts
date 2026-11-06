@@ -1,11 +1,13 @@
 import {expect} from 'chai';
 import {TaskExecuter} from '../../../../../src/backend/model/fileaccess/TaskExecuter';
+import {TestHelper} from '../../../../TestHelper';
 
 describe('TaskExecuter', () => {
+  before(TestHelper.resetConfig);
 
   it('should execute', async () => {
     const taskWorker = (input: number) => {
-      return new Promise<number>((resolve, reject) => {
+      return new Promise<number>((resolve) => {
         setTimeout(() => {
           resolve(input * 2);
         }, 1);
@@ -41,8 +43,8 @@ describe('TaskExecuter', () => {
 
   it('should handle race condition', async () => {
     let counter = 0;
-    const taskWorker = (input: number) => {
-      return new Promise<void>((resolve, reject) => {
+    const taskWorker = () => {
+      return new Promise<void>((resolve) => {
         setTimeout(() => {
           counter++;
           resolve();

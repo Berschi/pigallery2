@@ -1,4 +1,4 @@
-import {Injectable} from '@angular/core';
+import { Injectable, inject } from '@angular/core';
 import {NetworkService} from '../../../model/network/network.service';
 import {FileDTO} from '../../../../../common/entities/FileDTO';
 import {Utils} from '../../../../../common/Utils';
@@ -12,8 +12,10 @@ interface GpxStats {
   averageSpeed: number; // in km/h
 }
 
-@Injectable()
+@Injectable({providedIn: 'root'})
 export class MapService {
+  private networkService = inject(NetworkService);
+
   private static readonly OSMLAYERS: MapLayers[] = [
     {
       name: 'street',
@@ -23,7 +25,7 @@ export class MapService {
   ];
   private static MAPBOXLAYERS: MapLayers[] = [];
 
-  constructor(private networkService: NetworkService) {
+  constructor() {
     MapService.MAPBOXLAYERS = [
       {
         name: $localize`street`,
@@ -123,7 +125,7 @@ export class MapService {
     // Try to get time from GPX points if available
     if (path[0]['time']) {
       startTime = new Date(path[0]['time']);
-      endTime = new Date(path[path.length - 1]['time']);
+      endTime = new Date(path[path.length - 1]['time'] ?? NaN);
     }
 
     let duration = startTime && endTime ? (endTime.getTime() - startTime.getTime()) / 1000 : 0;
@@ -178,13 +180,13 @@ export class MapService {
     const getCoordinates = (inputElement: Document, tagName: string): (LatLngLiteral & { time?: string })[] => {
       const elements = inputElement.getElementsByTagName(tagName);
       const ret: LatLngLiteral[] = [];
-      for (let i = 0; i < elements.length; i++) {
+      for (const element of Array.from(elements)) {
         const point: LatLngLiteral & { time?: string } = {
-          lat: parseFloat(elements[i].getAttribute('lat')),
-          lng: parseFloat(elements[i].getAttribute('lon'))
+          lat: parseFloat(element.getAttribute('lat') ?? ''),
+          lng: parseFloat(element.getAttribute('lon') ?? '')
         };
         // Get time if available
-        const timeElement = elements[i].getElementsByTagName('time')[0];
+        const timeElement = element.getElementsByTagName('time')[0];
         if (timeElement) {
           point.time = timeElement.textContent;
         }

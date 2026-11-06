@@ -1,9 +1,9 @@
-<timepicker
-  [name]="name"
-  [ngModel]="date"
+<timepicker [name]="name() ?? ''"
+  [ngModel]="date()"
+  [ngModelOptions]="{standalone: true}"
   [showSpinners]="false"
   [showMeridian]="false"
   [mousewheel]="true"
   [arrowkeys]="true"
   (ngModelChange)="onChange($event)"
-  required></timepicker>
+  required />

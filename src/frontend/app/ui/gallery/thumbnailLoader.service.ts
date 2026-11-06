@@ -1,4 +1,4 @@
-import {Injectable} from '@angular/core';
+import { Injectable, inject } from '@angular/core';
 import {GalleryCacheService} from './cache.gallery.service';
 import {Media} from './Media';
 import {MediaIcon} from './MediaIcon';
@@ -13,13 +13,12 @@ export enum ThumbnailLoadingPriority {
   low = 1,
 }
 
-@Injectable()
+@Injectable({providedIn: 'root'})
 export class ThumbnailLoaderService {
-  que: Array<ThumbnailTask> = [];
-  runningRequests = 0;
+  private galleryCacheService = inject(GalleryCacheService);
 
-  constructor(private galleryCacheService: GalleryCacheService) {
-  }
+  que: ThumbnailTask[] = [];
+  runningRequests = 0;
 
   run = (): void => {
     if (
@@ -136,7 +135,7 @@ export class ThumbnailLoaderService {
       priority: ThumbnailLoadingPriority,
       listener: ThumbnailLoadingListener
   ): ThumbnailTaskEntity {
-    let thTask: ThumbnailTask = null;
+    let thTask: ThumbnailTask | null = null;
     // is image already queued?
     for (const item of this.que) {
       if (item.path === path) {
@@ -164,12 +163,12 @@ export class ThumbnailLoaderService {
     return thumbnailTaskEntity;
   }
 
-  private getNextTask(): ThumbnailTask {
+  private getNextTask(): ThumbnailTask | null {
     if (this.que.length === 0) {
       return null;
     }
 
-    let highestPriority: ThumbnailTask = null;
+    let highestPriority: ThumbnailTask | null = null;
     let currentPriority: ThumbnailLoadingPriority = Number.MAX_SAFE_INTEGER;
     for (const item1 of this.que) {
       for (const item of item1.taskEntities) {
@@ -214,7 +213,7 @@ export interface ThumbnailTaskEntity {
 
 interface ThumbnailTask {
   inProgress: boolean;
-  taskEntities: Array<ThumbnailTaskEntity>;
+  taskEntities: ThumbnailTaskEntity[];
   path: string;
   onLoaded: () => void;
 }

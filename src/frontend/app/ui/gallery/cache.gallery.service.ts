@@ -1,4 +1,4 @@
-import {Injectable} from '@angular/core';
+import { Injectable, effect, inject, untracked } from '@angular/core';
 import {ParentDirectoryDTO,} from '../../../../common/entities/DirectoryDTO';
 import {Utils} from '../../../../common/Utils';
 import {Config} from '../../../../common/config/public/Config';
@@ -23,8 +23,10 @@ interface CacheItem<T> {
   item: T;
 }
 
-@Injectable()
+@Injectable({providedIn: 'root'})
 export class GalleryCacheService {
+  private versionService = inject(VersionService);
+
   private static readonly CONTENT_PREFIX = 'CONTENT:';
   private static readonly AUTO_COMPLETE_PREFIX = 'AUTOCOMPLETE:';
   private static readonly INSTANT_SEARCH_PREFIX = 'INSTANT_SEARCH:';
@@ -37,31 +39,40 @@ export class GalleryCacheService {
   private static readonly SLIDESHOW_SPEED = 'SLIDESHOW_SPEED';
   private static THEME_MODE = 'THEME_MODE';
 
-  constructor(private versionService: VersionService,
-              authService: AuthenticationService) {
+  constructor() {
+    const authService = inject(AuthenticationService);
+
     // if it was a forced reload not a navigation, clear cache
     if (GalleryCacheService.wasAReload()) {
       GalleryCacheService.deleteCache();
     }
 
-    const onNewVersion = (ver: string) => {
-      if (
-          ver !== null &&
-          localStorage.getItem(GalleryCacheService.VERSION) !== ver
-      ) {
-        GalleryCacheService.deleteCache();
-        localStorage.setItem(GalleryCacheService.VERSION, ver);
-      }
-    };
-    this.versionService.version.subscribe(onNewVersion);
-    onNewVersion(this.versionService.version.value);
+    // later versions are checked by VersionService.onNewVersion
+    GalleryCacheService.checkVersion(this.versionService.version());
 
     // The cached content depends on what the user can see (e.g.: allow/block lists, sharing).
     // The server can answer 'not modified' to a different user, so the cache should not be reused.
-    authService.user.subscribe((user) => GalleryCacheService.onUser(user));
+    effect(() => {
+      const user = authService.user();
+      untracked(() => GalleryCacheService.onUser(user));
+    });
   }
 
-  private static onUser(user: UserDTO): void {
+  /**
+   * Clears the cache if the server's data version changed since it was stored.
+   * Called synchronously by VersionService, so no stale content is served after a new version arrives.
+   */
+  public static checkVersion(ver: string | null): void {
+    if (
+        ver !== null &&
+        localStorage.getItem(GalleryCacheService.VERSION) !== ver
+    ) {
+      GalleryCacheService.deleteCache();
+      localStorage.setItem(GalleryCacheService.VERSION, ver);
+    }
+  }
+
+  private static onUser(user: UserDTO | null): void {
     if (!user) {
       return;
     }
@@ -71,7 +82,7 @@ export class GalleryCacheService {
         GalleryCacheService.deleteCache();
         localStorage.setItem(GalleryCacheService.USER, userKey);
       }
-    } catch (e) {
+    } catch {
       // ignoring errors
     }
   }
@@ -83,7 +94,7 @@ export class GalleryCacheService {
     return perfEntries && perfEntries[0] && perfEntries[0].type === 'reload';
   }
 
-  private static loadCacheItem(key: string): PackedContentWrapper {
+  private static loadCacheItem(key: string): PackedContentWrapper | null {
     const tmp = localStorage.getItem(key);
     if (tmp != null) {
       const value: CacheItem<PackedContentWrapper> = JSON.parse(tmp);
@@ -102,26 +113,23 @@ export class GalleryCacheService {
 
   private static deleteCache(): void {
     try {
-      const toRemove = [];
+      const toRemove: string[] = [];
       for (let i = 0; i < localStorage.length; i++) {
-        if (
-            localStorage.key(i).startsWith(GalleryCacheService.CONTENT_PREFIX) ||
-            localStorage.key(i).startsWith(GalleryCacheService.SEARCH_PREFIX) ||
-            localStorage
-                .key(i)
-                .startsWith(GalleryCacheService.INSTANT_SEARCH_PREFIX) ||
-            localStorage
-                .key(i)
-                .startsWith(GalleryCacheService.AUTO_COMPLETE_PREFIX)
-        ) {
-          toRemove.push(localStorage.key(i));
+        const key = localStorage.key(i);
+        if (key && (
+            key.startsWith(GalleryCacheService.CONTENT_PREFIX) ||
+            key.startsWith(GalleryCacheService.SEARCH_PREFIX) ||
+            key.startsWith(GalleryCacheService.INSTANT_SEARCH_PREFIX) ||
+            key.startsWith(GalleryCacheService.AUTO_COMPLETE_PREFIX)
+        )) {
+          toRemove.push(key);
         }
       }
 
       for (const item of toRemove) {
         localStorage.removeItem(item);
       }
-    } catch (e) {
+    } catch {
       // ignoring errors
     }
   }
@@ -152,7 +160,7 @@ export class GalleryCacheService {
   }
 
 
-  private getSortOrGroup(prefix: string, cw: ContentWrapper): SortingMethod | GroupingMethod {
+  private getSortOrGroup(prefix: string, cw: ContentWrapper): SortingMethod | GroupingMethod | null {
     let key = prefix;
     if (cw?.searchResult?.searchQuery) {
       key += JSON.stringify(cw.searchResult.searchQuery);
@@ -211,7 +219,7 @@ export class GalleryCacheService {
     localStorage.removeItem(key);
   }
 
-  getGridSize(cw: ContentWrapperWithError): GridSizes {
+  getGridSize(cw: ContentWrapperWithError): GridSizes | null {
     let key = GalleryCacheService.GRID_SIZE_PREFIX;
     if (cw?.searchResult?.searchQuery) {
       key += JSON.stringify(cw.searchResult.searchQuery);
@@ -242,8 +250,8 @@ export class GalleryCacheService {
 
   public getAutoComplete(
       text: string,
-      type: SearchQueryTypes
-  ): IAutoCompleteItem[] {
+      type: SearchQueryTypes | null | undefined
+  ): IAutoCompleteItem[] | null {
     if (Config.Gallery.enableCache === false) {
       return null;
     }
@@ -268,8 +276,8 @@ export class GalleryCacheService {
 
   public setAutoComplete(
       text: string,
-      type: SearchQueryTypes,
-      items: Array<IAutoCompleteItem>
+      type: SearchQueryTypes | null | undefined,
+      items: IAutoCompleteItem[]
   ): void {
     if (Config.Gallery.enableCache === false) {
       return;
@@ -278,7 +286,7 @@ export class GalleryCacheService {
         GalleryCacheService.AUTO_COMPLETE_PREFIX +
         text +
         (type ? '_' + type : '');
-    const tmp: CacheItem<Array<IAutoCompleteItem>> = {
+    const tmp: CacheItem<IAutoCompleteItem[]> = {
       timestamp: Date.now(),
       item: items,
     };
@@ -290,7 +298,7 @@ export class GalleryCacheService {
     }
   }
 
-  public getSearch(query: SearchQueryDTO): PackedContentWrapperWithError {
+  public getSearch(query: SearchQueryDTO): PackedContentWrapperWithError | null {
     if (Config.Gallery.enableCache === false) {
       return null;
     }
@@ -302,7 +310,7 @@ export class GalleryCacheService {
   }
 
   public setSearch(cw: PackedContentWrapperWithError): void {
-    if (Config.Gallery.enableCache === false) {
+    if (Config.Gallery.enableCache === false || !cw.searchResult) {
       return;
     }
     const tmp: CacheItem<PackedContentWrapperWithError> = {
@@ -318,7 +326,7 @@ export class GalleryCacheService {
     }
   }
 
-  public getDirectory(directoryName: string): PackedContentWrapperWithError {
+  public getDirectory(directoryName: string): PackedContentWrapperWithError | null {
     if (Config.Gallery.enableCache === false) {
       return null;
     }
@@ -329,21 +337,22 @@ export class GalleryCacheService {
       if (value != null) {
         return JSON.parse(value);
       }
-    } catch (e) {
+    } catch {
       // ignoring errors
     }
     return {} as PackedContentWrapperWithError;
   }
 
   public setDirectory(cw: PackedContentWrapperWithError): void {
-    if (Config.Gallery.enableCache === false) {
+    const directory = cw?.directory;
+    if (Config.Gallery.enableCache === false || !directory) {
       return;
     }
 
     const key =
         GalleryCacheService.CONTENT_PREFIX +
-        Utils.concatUrls(cw?.directory.path, cw?.directory.name);
-    if (cw?.directory?.isPartial === true && localStorage.getItem(key)) {
+        Utils.concatUrls(directory.path, directory.name);
+    if (directory.isPartial === true && localStorage.getItem(key)) {
       return;
     }
 
@@ -397,18 +406,20 @@ export class GalleryCacheService {
   private reset(): void {
     try {
       const currentUserStr = localStorage.getItem('currentUser');
+      const version = this.versionService.version();
       localStorage.clear();
-      localStorage.setItem('currentUser', currentUserStr);
-      localStorage.setItem(
-          GalleryCacheService.VERSION,
-          this.versionService.version.value
-      );
-    } catch (e) {
+      if (currentUserStr !== null) {
+        localStorage.setItem('currentUser', currentUserStr);
+      }
+      if (version !== null) {
+        localStorage.setItem(GalleryCacheService.VERSION, version);
+      }
+    } catch {
       // ignoring errors
     }
   }
 
-  getThemeMode(): ThemeModes {
+  getThemeMode(): ThemeModes | null {
     const key = GalleryCacheService.THEME_MODE;
     const tmp = localStorage.getItem(key) as keyof typeof ThemeModes;
     if (tmp != null) {

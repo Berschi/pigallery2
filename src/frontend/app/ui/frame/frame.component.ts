@@ -1,23 +1,21 @@
-import {Component, ElementRef, HostListener, Input, ViewChild, ViewEncapsulation} from '@angular/core';
-import {Router, RouterLink} from '@angular/router';
+import { Component, ElementRef, ViewEncapsulation, computed, inject, input, viewChild } from '@angular/core';
+import {RouterLink} from '@angular/router';
 import {AuthenticationService} from '../../model/network/authentication.service';
-import {UserDTO, UserRoles} from '../../../../common/entities/UserDTO';
+import {UserRoles} from '../../../../common/entities/UserDTO';
 import {Config} from '../../../../common/config/public/Config';
-import {BehaviorSubject} from 'rxjs';
 import {NotificationService} from '../../model/notification.service';
 import {QueryService} from '../../model/query.service';
-import {NavigationLinkTypes, ScrollUpModes, ThemeModes} from '../../../../common/config/public/ClientConfig';
+import {NavigationLinkConfig, NavigationLinkTypes, ScrollUpModes, ThemeModes} from '../../../../common/config/public/ClientConfig';
 import {SearchQueryDTO} from '../../../../common/entities/SearchQueryDTO';
 import {Utils} from '../../../../common/Utils';
 import {PageHelper} from '../../model/page.helper';
 import {BsDropdownDirective, BsDropdownMenuDirective, BsDropdownToggleDirective} from 'ngx-bootstrap/dropdown';
 import {LanguageComponent} from '../language/language.component';
 import {ThemeService} from '../../model/theme.service';
-import {DeviceDetectorService} from 'ngx-device-detector';
+import {DeviceHelper} from '../../model/device.helper';
 import {LoadingBarModule} from '@ngx-loading-bar/core';
 import {IconComponent} from '../../icon.component';
-import {CollapseDirective} from 'ngx-bootstrap/collapse';
-import {NgFor, NgIf, NgSwitch, NgSwitchCase} from '@angular/common';
+
 import {GallerySearchComponent} from '../gallery/search/search.gallery.component';
 import {GalleryShareComponent} from '../gallery/share/share.gallery.component';
 import {NgIconComponent} from '@ng-icons/core';
@@ -25,19 +23,28 @@ import {FormsModule} from '@angular/forms';
 import {GalleryService} from '../gallery/gallery.service';
 import {UploaderService} from '../gallery/uploader/uploader.service';
 import {SearchQueryUtils} from '../../../../common/SearchQueryUtils';
+import {NavigationService} from '../../model/navigation.service';
+
+// a navbar link with its state
+export interface NavbarLinkItem {
+  link: NavigationLinkConfig;
+  active: boolean;
+  // the /search route parameter of a search link
+  searchUrl?: string;
+}
 
 @Component({
   selector: 'app-frame',
+  host: {
+    '(window:scroll)': 'onScroll()'
+  },
   templateUrl: './frame.component.html',
-  styleUrls: ['./frame.component.css'],
+  styleUrl: './frame.component.css',
   encapsulation: ViewEncapsulation.Emulated,
   imports: [
     LoadingBarModule,
     RouterLink,
     IconComponent,
-    CollapseDirective,
-    NgFor,
-    NgIf,
     GallerySearchComponent,
     GalleryShareComponent,
     NgIconComponent,
@@ -45,18 +52,24 @@ import {SearchQueryUtils} from '../../../../common/SearchQueryUtils';
     BsDropdownDirective,
     BsDropdownToggleDirective,
     BsDropdownMenuDirective,
-    NgSwitch,
-    NgSwitchCase,
-    FormsModule,
-  ],
+    FormsModule
+],
 })
 export class FrameComponent {
-  @Input() showSearch = false;
-  @Input() showShare = false;
-  public readonly user: BehaviorSubject<UserDTO>;
+  private authService = inject(AuthenticationService);
+  notificationService = inject(NotificationService);
+  queryService = inject(QueryService);
+  private navigationService = inject(NavigationService);
+  themeService = inject(ThemeService);
+  galleryService = inject(GalleryService);
+  uploadService = inject(UploaderService);
+
+  readonly showSearch = input(false);
+  readonly showShare = input(false);
+  public readonly user = this.authService.user;
+  public readonly isAdmin = this.authService.isAdmin;
   public readonly authenticationRequired = Config.Users.authenticationRequired;
   public readonly title = Config.Server.applicationTitle;
-  public collapsed = true;
   public readonly navbarLinks = Config.Gallery.NavBar.links;
   public readonly NavigationLinkTypes = NavigationLinkTypes;
   public readonly stringify = JSON.stringify;
@@ -66,10 +79,10 @@ export class FrameComponent {
   public navbarKeepTop = true;
   public animateNavbar = false;
   public fixNavbarOnTop = false;
-  @ViewChild('dropdownMenu', {static: true}) dropdownMenu: ElementRef;
-  @ViewChild('navContainer', {static: true}) navContainer: ElementRef;
-  @ViewChild('dropdown', {static: true}) dropdown: BsDropdownDirective;
-  @ViewChild('languageSelector', {static: true}) languageSelector: LanguageComponent;
+  readonly dropdownMenu = viewChild<ElementRef>('dropdownMenu');
+  readonly navContainer = viewChild.required<ElementRef>('navContainer');
+  readonly dropdown = viewChild<BsDropdownDirective>('dropdown');
+  readonly languageSelector = viewChild<LanguageComponent>('languageSelector');
   ThemeModes = ThemeModes;
   public readonly enableScrollUpButton: boolean;
   /* sticky top navbar */
@@ -79,61 +92,62 @@ export class FrameComponent {
     down: 0
   };
 
-  constructor(
-    private authService: AuthenticationService,
-    public notificationService: NotificationService,
-    public queryService: QueryService,
-    private router: Router,
-    public themeService: ThemeService,
-    private deviceService: DeviceDetectorService,
-    public galleryService: GalleryService,
-    public uploadService: UploaderService
-  ) {
-    this.enableScrollUpButton = Config.Gallery.NavBar.showScrollUpButton === ScrollUpModes.always || (Config.Gallery.NavBar.showScrollUpButton === ScrollUpModes.mobileOnly && !this.deviceService.isDesktop());
-    this.user = this.authService.user;
+  public readonly isFacesAvailable = computed((): boolean =>
+    Config.Faces.enabled &&
+    this.authService.isAuthorized(Config.Faces.readAccessMinRole)
+  );
+
+  public readonly isGalleryAvailable = computed((): boolean =>
+    this.authService.isAuthorized(UserRoles.User)
+  );
+
+  public readonly isCustomLinksAvailable = computed((): boolean =>
+    this.authService.isAuthorized(UserRoles.User)
+  );
+
+  public readonly isAlbumsAvailable = computed((): boolean =>
+    Config.Album.enabled &&
+    this.authService.isAuthorized(Config.Album.readAccessMinRole)
+  );
+
+  // the navbar links with their active state, that follows the url
+  public readonly navbarLinkItems = computed((): NavbarLinkItem[] => {
+    const url = this.navigationService.url();
+    return this.navbarLinks.map((link): NavbarLinkItem => {
+      switch (link.type) {
+        case NavigationLinkTypes.albums:
+          return {link, active: url.startsWith('/albums')};
+        case NavigationLinkTypes.faces:
+          return {link, active: url.startsWith('/faces')};
+        case NavigationLinkTypes.gallery:
+          return {link, active: url.startsWith('/gallery')};
+        case NavigationLinkTypes.url:
+          return {link, active: !!link.url && url.startsWith(link.url)};
+        case NavigationLinkTypes.search:
+          return {
+            link,
+            active: !!link.SearchQuery && FrameComponent.isSearchActive(url, link.SearchQuery),
+            searchUrl: link.SearchQuery ? SearchQueryUtils.urlify(link.SearchQuery) : undefined
+          };
+        default:
+          return {link, active: false};
+      }
+    });
+  });
+
+  constructor() {
+    this.enableScrollUpButton = Config.Gallery.NavBar.showScrollUpButton === ScrollUpModes.always || (Config.Gallery.NavBar.showScrollUpButton === ScrollUpModes.mobileOnly && DeviceHelper.isTouchDevice());
   }
 
-  isAdmin(): boolean {
-    return this.user.value && this.user.value.role >= UserRoles.Admin;
-  }
-
-  isFacesAvailable(): boolean {
-    return (
-      Config.Faces.enabled &&
-      this.user.value &&
-      this.user.value.role >= Config.Faces.readAccessMinRole
-    );
-  }
-
-
-  isGalleryAvailable(): boolean {
-    return (
-      this.user.value &&
-      this.user.value.role >= UserRoles.User
-    );
-  }
-
-
-  isCustomLinksAvailable(): boolean {
-    return (
-      this.user.value &&
-      this.user.value.role >= UserRoles.User
-    );
-  }
-
-  isLinkActive(url: string): boolean {
-    return this.router.url.startsWith(url);
-  }
-
-  isSearchActive(searchQuery: SearchQueryDTO): boolean {
-    if (!this.router.url.startsWith('/search')) {
+  private static isSearchActive(url: string, searchQuery: SearchQueryDTO): boolean {
+    if (!url.startsWith('/search')) {
       return false;
     }
     try {
-      const rawUrl = this.router.url.substring('/search/'.length);
+      const rawUrl = url.substring('/search/'.length);
       const sq = JSON.parse(decodeURIComponent(rawUrl)) as SearchQueryDTO;
       return sq.type == searchQuery.type && Utils.equalsFilter(sq, searchQuery);
-    } catch (e) {
+    } catch {
       // ignored
     }
     return false;
@@ -143,14 +157,6 @@ export class FrameComponent {
     this.authService.logout();
   }
 
-  isAlbumsAvailable(): boolean {
-    return Config.Album.enabled &&
-      this.user.value &&
-      this.user.value.role >= Config.Album.readAccessMinRole;
-  }
-
-
-  @HostListener('window:scroll')
   onScroll(): void {
     const scrollPosition = PageHelper.ScrollY;
     const up = this.lastScroll.any > scrollPosition;
@@ -158,7 +164,7 @@ export class FrameComponent {
     const upDelay = up && this.lastScroll.down > scrollPosition + window.innerHeight * Config.Gallery.NavBar.NavbarShowDelay;
     const downDelay = down && this.lastScroll.up < scrollPosition - window.innerHeight * Config.Gallery.NavBar.NavbarHideDelay;
     // We are the top where the navbar by default lives
-    if (this.navContainer.nativeElement.offsetHeight > scrollPosition) {
+    if (this.navContainer().nativeElement.offsetHeight > scrollPosition) {
       // do not force move navbar up when we are scrolling up from bottom
       if (this.shouldHideNavbar != false || scrollPosition <= 0) {
         this.navbarKeepTop = true;
@@ -173,8 +179,8 @@ export class FrameComponent {
       this.navbarKeepTop = false;
 
       if (downDelay) { // scroll down
-        this.dropdown.hide();
-        this.languageSelector.dropdown.hide();
+        this.dropdown()?.hide();
+        this.languageSelector()?.dropdown()?.hide();
       }
     }
 
@@ -195,10 +201,6 @@ export class FrameComponent {
 
   scrollUp(): void {
     PageHelper.ScrollY = 0;
-  }
-
-  getSearchParams(q: SearchQueryDTO): string {
-    return SearchQueryUtils.urlify(q);
   }
 
 }

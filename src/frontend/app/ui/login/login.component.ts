@@ -1,4 +1,4 @@
-import {Component, OnInit} from '@angular/core';
+import { Component, OnInit, inject, signal } from '@angular/core';
 import {LoginCredential} from '../../../../common/entities/LoginCredential';
 import {AuthenticationService} from '../../model/network/authentication.service';
 import {ErrorCodes} from '../../../../common/entities/Error';
@@ -8,32 +8,31 @@ import {LanguageComponent} from '../language/language.component';
 import {IconComponent} from '../../icon.component';
 import {FormsModule} from '@angular/forms';
 import {NgIconComponent} from '@ng-icons/core';
-import {NgIf} from '@angular/common';
+
 
 @Component({
   selector: 'app-login',
   templateUrl: './login.component.html',
-  styleUrls: ['./login.component.css'],
+  styleUrl: './login.component.css',
   imports: [
-    NgIf,
     LanguageComponent,
     IconComponent,
     FormsModule,
-    NgIconComponent,
-  ]
+    NgIconComponent
+]
 })
 export class LoginComponent implements OnInit {
+  private authService = inject(AuthenticationService);
+  private navigation = inject(NavigationService);
+
   loginCredential: LoginCredential;
-  loginError = false;
+  readonly loginError = signal(false);
   title: string;
-  inProgress = false;
+  readonly inProgress = signal(false);
   oidcEnabled = false;
   oidcDisplayName = 'OpenID login';
 
-  constructor(
-    private authService: AuthenticationService,
-    private navigation: NavigationService
-  ) {
+  constructor() {
     this.loginCredential = new LoginCredential();
     this.title = Config.Server.applicationTitle;
     this.oidcEnabled = !!Config.Users.oidc?.enabled;
@@ -47,18 +46,18 @@ export class LoginComponent implements OnInit {
   }
 
   async onLogin(): Promise<void> {
-    this.loginError = false;
+    this.loginError.set(false);
 
-    this.inProgress = true;
+    this.inProgress.set(true);
     try {
       await this.authService.login(this.loginCredential);
     } catch (error) {
       if (error && error.code === ErrorCodes.CREDENTIAL_NOT_FOUND) {
-        this.loginError = true;
+        this.loginError.set(true);
       }
     }
 
-    this.inProgress = false;
+    this.inProgress.set(false);
   }
 
   onLoginWithOIDC(): void {

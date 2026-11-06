@@ -1,16 +1,15 @@
-import {Component, OnDestroy, OnInit, TemplateRef} from '@angular/core';
-import {ContentWrapper} from '../../../../../common/entities/ContentWrapper';
+import { Component, OnDestroy, TemplateRef, computed, inject } from '@angular/core';
 import {NotificationService} from '../../../model/notification.service';
 import {BsModalService} from 'ngx-bootstrap/modal';
-import {BsModalRef} from 'ngx-bootstrap/modal/bs-modal-ref.service';
+import {BsModalRef} from 'ngx-bootstrap/modal';
 import {Subscription} from 'rxjs';
 import {ActivatedRoute, Router} from '@angular/router';
 import {QueryParams} from '../../../../../common/QueryParams';
 import {ContentLoaderService} from '../contentLoader.service';
 import { NgIconComponent } from '@ng-icons/core';
 import { FormsModule } from '@angular/forms';
-import { ClipboardModule } from 'ngx-clipboard';
-import { NgFor, NgIf } from '@angular/common';
+import {CopyDirective} from '../../utils/copy/copy.directive';
+
 import { StringifyEnum } from '../../../pipes/StringifyEnum';
 import { LightBoxTitleTexts } from '../../../../../common/config/public/ClientConfig';
 import {Utils} from '../../../../../common/Utils';
@@ -19,18 +18,25 @@ import {Config} from '../../../../../common/config/public/Config';
 @Component({
     selector: 'app-gallery-photo-frame-builder',
     templateUrl: './photo-frame-builder.gallery.component.html',
-    styleUrls: ['./photo-frame-builder.gallery.component.css'],
+    styleUrl: './photo-frame-builder.gallery.component.css',
     imports: [
-        NgIconComponent,
-        FormsModule,
-        ClipboardModule,
-        NgFor,
-        NgIf,
-        StringifyEnum,
-    ]
+    NgIconComponent,
+    FormsModule,
+    CopyDirective,
+    StringifyEnum
+]
   })
-  export class PhotoFrameBuilderGalleryComponent implements OnInit, OnDestroy {
-    enabled = true;
+  export class PhotoFrameBuilderGalleryComponent implements OnDestroy {
+    contentLoaderService = inject(ContentLoaderService);
+    private notification = inject(NotificationService);
+    private route = inject(ActivatedRoute);
+    private router = inject(Router);
+    private modalService = inject(BsModalService);
+
+    readonly enabled = computed((): boolean => {
+      const content = this.contentLoaderService.content();
+      return !!(content?.directory || content?.searchResult);
+    });
     url = '';
     showSettings = false;
     // Options
@@ -48,19 +54,11 @@ import {Config} from '../../../../../common/config/public/Config';
     // Enum option names for selects
     readonly LightBoxTitleTextsArr = Utils.enumToArray(LightBoxTitleTexts).map(v=>v.value);
 
-  contentSubscription: Subscription = null;
+  modalRef: BsModalRef | null;
 
-  modalRef: BsModalRef;
+  private readonly subscription: Subscription | null = null;
 
-  private readonly subscription: Subscription = null;
-
-  constructor(
-      public contentLoaderService: ContentLoaderService,
-      private notification: NotificationService,
-      private route: ActivatedRoute,
-      private router: Router,
-      private modalService: BsModalService
-  ) {
+  constructor() {
     // keep for potential future route driven defaults
     this.subscription = this.route.queryParams.subscribe(() => {
       // no-op, we only need router.url at open/build time
@@ -78,7 +76,7 @@ import {Config} from '../../../../../common/config/public/Config';
     // Auto polling toggle
     if (typeof this.autoPollInterval != 'undefined') {
       u.searchParams.set(QueryParams.gallery.autoPollInterval,
-        String(parseInt(this.autoPollInterval as unknown as any, 10)));
+        String(parseInt(String(this.autoPollInterval), 10)));
     } else {
       u.searchParams.delete(QueryParams.gallery.autoPollInterval);
     }
@@ -109,7 +107,7 @@ import {Config} from '../../../../../common/config/public/Config';
     if (this.slideshowSpeed && this.slideshowSpeed > 0) {
       u.searchParams.set(
         QueryParams.gallery.lightbox.slideshowSpeed,
-        String(parseInt(this.slideshowSpeed as unknown as any, 10))
+        String(parseInt(String(this.slideshowSpeed), 10))
       );
     } else {
       u.searchParams.delete(QueryParams.gallery.lightbox.slideshowSpeed);
@@ -144,43 +142,24 @@ import {Config} from '../../../../../common/config/public/Config';
   onOptionsChange(): void {
     this.buildUrl();
   }
-  trackByIndex(index: number): number {
-    return index;
-  }
 
   toggleSettings(): void {
     this.showSettings = !this.showSettings;
   }
 
 
-  ngOnInit(): void {
-    this.contentSubscription = this.contentLoaderService.content.subscribe(
-        (content: ContentWrapper) => {
-          this.enabled = !!(content?.directory || content?.searchResult);
-          if (!this.enabled) {
-            return;
-          }
-          // this.data.directory = Utils.concatUrls((<DirectoryDTO>content.directory).path, (<DirectoryDTO>content.directory).name);
-        }
-    );
-  }
-
   ngOnDestroy(): void {
-    if (this.contentSubscription !== null) {
-      this.contentSubscription.unsubscribe();
-    }
-
     if (this.subscription !== null) {
       this.subscription.unsubscribe();
     }
   }
 
-  openModal(template: TemplateRef<unknown>): boolean {
-    if (!this.enabled) {
-      return;
+  openModal(template: TemplateRef<unknown>): boolean | undefined {
+    if (!this.enabled()) {
+      return undefined;
     }
     if (this.modalRef) {
-      this.modalRef.hide();
+      this.modalRef?.hide();
     }
 
     this.modalRef = this.modalService.show(template, {class: 'modal-lg'});
@@ -194,7 +173,7 @@ import {Config} from '../../../../../common/config/public/Config';
   }
 
   public hideModal(): void {
-    this.modalRef.hide();
+    this.modalRef?.hide();
     this.modalRef = null;
   }
 }

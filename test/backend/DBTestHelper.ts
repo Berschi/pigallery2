@@ -7,7 +7,6 @@ import {ProjectPath} from '../../src/backend/ProjectPath';
 import {DirectoryBaseDTO, ParentDirectoryDTO, SubDirectoryDTO} from '../../src/common/entities/DirectoryDTO';
 import {ObjectManagers} from '../../src/backend/model/ObjectManagers';
 import {DiskManager} from '../../src/backend/model/fileaccess/DiskManager';
-import {IndexingManager} from '../../src/backend/model/database/IndexingManager';
 import {GalleryManager} from '../../src/backend/model/database/GalleryManager';
 import {Connection} from 'typeorm';
 import {Utils} from '../../src/common/Utils';
@@ -15,21 +14,15 @@ import {TestHelper} from '../TestHelper';
 import {VideoDTO} from '../../src/common/entities/VideoDTO';
 import {PhotoDTO} from '../../src/common/entities/PhotoDTO';
 import {Logger} from '../../src/backend/Logger';
-import {ContextUser, SessionContext} from '../../src/backend/model/SessionContext';
+import {SessionUser, SessionContext} from '../../src/backend/model/SessionContext';
 import {SessionManager} from '../../src/backend/model/database/SessionManager';
 import {DirectoryEntity} from '../../src/backend/model/database/enitites/DirectoryEntity';
 import {MediaEntity} from '../../src/backend/model/database/enitites/MediaEntity';
 import {ProjectedDirectoryCacheEntity} from '../../src/backend/model/database/enitites/ProjectedDirectoryCacheEntity';
+import {VersionEntity} from '../../src/backend/model/database/enitites/VersionEntity';
 
 declare let describe: any;
 const savedDescribe = describe;
-
-class IndexingManagerTest extends IndexingManager {
-
-  public async saveToDB(scannedDirectory: ParentDirectoryDTO): Promise<void> {
-    return super.saveToDB(scannedDirectory);
-  }
-}
 
 class GalleryManagerTest extends GalleryManager {
 
@@ -47,6 +40,7 @@ const LOG_TAG = '[DBTestHelper]';
 
 export class DBTestHelper {
 
+  private static mysqlSchemeBuilt = false;
   static enable = {
     sqlite: process.env.TEST_SQLITE !== 'false',
     mysql: process.env.TEST_MYSQL !== 'false'
@@ -85,7 +79,7 @@ export class DBTestHelper {
 
   public static get defaultSession(): SessionContext {
     const session = new SessionContext();
-    session.user = {projectionKey: SessionManager.NO_PROJECTION_KEY} as ContextUser;
+    session.user = {projectionKey: SessionManager.NO_PROJECTION_KEY} as SessionUser;
     return session;
   }
 
@@ -158,9 +152,16 @@ export class DBTestHelper {
     return dir;
   }
 
+  /**
+   * Like TestHelper.resetConfig(), but keeps the DB settings of this helper.
+   * Use it instead of TestHelper.resetConfig() after initDB(), so the config still matches the open DB connection.
+   */
+  public resetConfig = (): void => {
+    TestHelper.resetConfig();
+    this.applyDBConfig();
+  };
+
   public initDB = async (): Promise<void> => {
-    await Config.load();
-    Config.Extensions.enabled = false; // make all tests clean
     if (typeof this.dbType === 'undefined') {
       throw new Error('dbType is undefined');
     }
@@ -245,6 +246,17 @@ export class DBTestHelper {
     return JSON.stringify({dirs, dCache, media}, null, 2);
   }
 
+  private applyDBConfig(): void {
+    Config.Extensions.enabled = false; // make all tests clean
+    Config.Database.type = this.dbType;
+    if (this.dbType === DatabaseType.mysql) {
+      Config.Database.mysql.database = 'pigallery2_test';
+    } else {
+      Config.Database.dbFolder = TestHelper.TMP_DIR;
+      ProjectPath.reset();
+    }
+  }
+
   private async initMySQL(): Promise<void> {
     await this.resetMySQL();
   }
@@ -258,12 +270,44 @@ export class DBTestHelper {
 
   private async clearUpMysql(): Promise<void> {
     Logger.debug(LOG_TAG, 'clearing up mysql');
-    Config.Database.type = DatabaseType.mysql;
-    Config.Database.mysql.database = 'pigallery2_test';
-    const conn = await SQLConnection.getConnection();
-    await conn.dropDatabase();
+    this.applyDBConfig();
+    // reset first: it waits for background saves that would otherwise hit the dropped tables
     await ObjectManagers.reset();
+    const conn = await SQLConnection.getConnection();
+    // Rebuilding the scheme is slow on MySQL, so do it only once per run (to pick up entity changes)
+    // and only empty the tables afterward. Keeping the version row skips the rebuild in schemeSync.
+    if (!DBTestHelper.mysqlSchemeBuilt || !(await DBTestHelper.truncateMysql(conn))) {
+      await conn.dropDatabase();
+      DBTestHelper.mysqlSchemeBuilt = true;
+    }
+    await SQLConnection.close();
     await fs.promises.rm(TestHelper.TMP_DIR, {recursive: true, force: true});
+  }
+
+  /**
+   * Empties every table except the version and resets the ids, like a fresh DB.
+   * DELETE + resetting AUTO_INCREMENT is several times faster than TRUNCATE on InnoDB.
+   * Returns false if it failed (e.g. a test dropped some tables).
+   */
+  private static async truncateMysql(conn: Connection): Promise<boolean> {
+    const versionTable = conn.getMetadata(VersionEntity).tableName;
+    const tables = new Set(conn.entityMetadatas.map(m => m.tableName));
+    tables.delete(versionTable);
+    const qr = conn.createQueryRunner();
+    try {
+      await qr.query('SET FOREIGN_KEY_CHECKS = 0');
+      for (const table of tables) {
+        await qr.query('DELETE FROM `' + table + '`');
+        await qr.query('ALTER TABLE `' + table + '` AUTO_INCREMENT = 1');
+      }
+      return true;
+    } catch (e) {
+      Logger.debug(LOG_TAG, 'Could not truncate mysql tables, dropping the db', e);
+      return false;
+    } finally {
+      await qr.query('SET FOREIGN_KEY_CHECKS = 1');
+      await qr.release();
+    }
   }
 
   private async initSQLite(): Promise<void> {
@@ -278,9 +322,7 @@ export class DBTestHelper {
 
   private async clearUpSQLite(): Promise<void> {
     Logger.debug(LOG_TAG, 'clearing up sqlite');
-    Config.Database.type = DatabaseType.sqlite;
-    Config.Database.dbFolder = TestHelper.TMP_DIR;
-    ProjectPath.reset();
+    this.applyDBConfig();
     await ObjectManagers.reset();
     await fs.promises.rm(TestHelper.TMP_DIR, {recursive: true, force: true});
   }

@@ -1,10 +1,9 @@
 import {ComponentFixture, TestBed} from '@angular/core/testing';
 import {ActivatedRoute, provideRouter} from '@angular/router';
-import {BehaviorSubject, Observable, of} from 'rxjs';
-import {ChangeDetectorRef} from '@angular/core';
-import {provideHttpClient, withInterceptorsFromDi} from '@angular/common/http';
+import {BehaviorSubject, of} from 'rxjs';
+import {ChangeDetectorRef, signal} from '@angular/core';
+import {provideHttpClient, withXhr} from '@angular/common/http';
 import {provideHttpClientTesting} from '@angular/common/http/testing';
-import {DatePipe} from '@angular/common';
 
 import {GalleryComponent} from './gallery.component';
 import {ContentLoaderService} from './contentLoader.service';
@@ -13,68 +12,73 @@ import {AuthenticationService} from '../../model/network/authentication.service'
 import {ShareService} from './share.service';
 import {NavigationService} from '../../model/navigation.service';
 import {FilterService} from './filter/filter.service';
-import {GallerySortingService} from './navigator/sorting.service';
+import {GallerySortingService, GroupedDirectoryContent} from './navigator/sorting.service';
 import {PiTitleService} from '../../model/pi-title.service';
-import {GPXFilesFilterPipe} from '../../pipes/GPXFilesFilterPipe';
-import {MDFilesFilterPipe} from '../../pipes/MDFilesFilterPipe';
 import {Config} from '../../../../common/config/public/Config';
 import {LeafletMarkerClusterModule} from '@bluehalo/ngx-leaflet-markercluster';
 import {GalleryCacheService} from './cache.gallery.service';
 import {ContentWrapperWithError} from '../../../../common/entities/ContentWrapper';
 import {FullScreenService} from './fullscreen.service';
 import {OverlayService} from './overlay.service';
-import {provideNoopAnimations} from '@angular/platform-browser/animations';
 import {QueryService} from '../../model/query.service';
 import {NotificationService} from '../../model/notification.service';
 import {GalleryNavigatorService} from './navigator/navigator.service';
 import {MediaButtonModalService} from './grid/photo/media-button-modal/media-button-modal.service';
 import {SortingMethod} from '../../../../common/entities/SortingMethods';
+import {GridSizes} from '../../../../common/entities/GridSizes';
+import {PhotoDTO} from '../../../../common/entities/PhotoDTO';
 import {SearchQueryParserService} from './search/search-query-parser.service';
 import {BlogService, GroupedMarkdown} from './blog/blog.service';
-import {UploaderService, UploadProgress} from './uploader/uploader.service';
+import {UploaderService} from './uploader/uploader.service';
+import {ThemeService} from '../../model/theme.service';
+import {DeviceHelper} from '../../model/device.helper';
+import {provideIcons} from '@ng-icons/core';
+import {appIcons} from '../../icons';
 
 
 // Mock services
 class MockContentLoaderService {
-  content = new BehaviorSubject<ContentWrapperWithError>({} as ContentWrapperWithError);
-  loadDirectory = jasmine.createSpy('loadDirectory');
-  search = jasmine.createSpy('search').and.returnValue(Promise.resolve());
+  readonly content = signal<ContentWrapperWithError | null>({} as ContentWrapperWithError);
+  loadDirectory = vi.fn();
+  search = vi.fn().mockReturnValue(Promise.resolve());
 
-  constructor(private initialContent: ContentWrapperWithError = null) {
+  constructor(private initialContent: ContentWrapperWithError | null = null) {
     if (initialContent) {
-      this.content.next(initialContent);
+      this.content.set(initialContent);
     }
   }
 }
 
 class MockContentService {
-  sortedFilteredContent = new BehaviorSubject(null);
+  readonly sortedFilteredContent = signal<GroupedDirectoryContent | null>(null);
 }
 
 class MockAuthenticationService {
-  user = new BehaviorSubject(null); // Add this line
-  isAuthenticated = jasmine.createSpy('isAuthenticated').and.returnValue(true);
-  canSearch = jasmine.createSpy('canSearch').and.returnValue(true);
-  isAuthorized = jasmine.createSpy('isAuthorized').and.returnValue(true);
-  logout = jasmine.createSpy('logout'); // Also add logout method if needed
+  readonly user = signal(null);
+  isAuthenticated = vi.fn().mockReturnValue(true);
+  canSearch = vi.fn().mockReturnValue(true);
+  isAuthorized = vi.fn().mockReturnValue(true);
+  isAdmin = vi.fn().mockReturnValue(false);
+  logout = vi.fn(); // Also add logout method if needed
 }
 
 class MockShareService {
-  sharingSubject = new BehaviorSubject(null);
+  readonly sharing = signal(null);
   currentSharing = new BehaviorSubject(null);
 
-  wait = jasmine.createSpy('wait').and.returnValue(Promise.resolve());
-  isSharing = jasmine.createSpy('isSharing').and.returnValue(false);
-  getSharingKey = jasmine.createSpy('getSharingKey').and.returnValue('test-key');
+  wait = vi.fn().mockReturnValue(Promise.resolve());
+  isSharing = vi.fn().mockReturnValue(false);
+  getSharingKey = vi.fn().mockReturnValue('test-key');
 }
 
 class MockNavigationService {
-  toLogin = jasmine.createSpy('toLogin').and.returnValue(Promise.resolve(true));
-  toGallery = jasmine.createSpy('toGallery').and.returnValue(Promise.resolve(true));
+  readonly url = signal('/gallery');
+  toLogin = vi.fn().mockReturnValue(Promise.resolve(true));
+  toGallery = vi.fn().mockReturnValue(Promise.resolve(true));
 }
 
 class MockFilterService {
-  applyFilters = jasmine.createSpy('applyFilters').and.returnValue(of(null));
+  readonly filteredContent = signal({content: null, filters: {areFiltersActive: false}});
 }
 
 class MockCacheService {
@@ -82,44 +86,34 @@ class MockCacheService {
     return null;
   }
 
-  setThemeMode() {
-  }
+  setThemeMode = vi.fn();
 }
 
 class MockBlogService{
-  getMarkDowns(date: Date): Observable<GroupedMarkdown[]>{
-    return of([]);
+  getMarkDowns(): GroupedMarkdown[] {
+    return [];
   }
 }
 
 
 class MockGallerySortingService {
-  sorting = new BehaviorSubject({} as SortingMethod);
-  grouping = new BehaviorSubject({} as SortingMethod);
-  applySorting = jasmine.createSpy('applySorting').and.returnValue(of(null));
-  isDefaultSortingAndGrouping = jasmine.createSpy('isDefaultSortingAndGrouping').and.returnValue(of(true));
+  readonly sorting = signal({} as SortingMethod);
+  readonly grouping = signal({} as SortingMethod);
+  isDefaultSortingAndGrouping = vi.fn().mockReturnValue(of(true));
 }
 
 class MockPiTitleService {
-  setSearchTitle = jasmine.createSpy('setSearchTitle');
-  setDirectoryTitle = jasmine.createSpy('setDirectoryTitle');
+  setSearchTitle = vi.fn();
+  setDirectoryTitle = vi.fn();
 }
-
-class MockGPXFilesFilterPipe {
-  transform = jasmine.createSpy('transform').and.returnValue([]);
-}
-
-class MockMDFilesFilterPipe {
-  transform = jasmine.createSpy('transform').and.returnValue([]);
-}
-
-class MockRouter {
-  navigate = jasmine.createSpy('navigate').and.returnValue(Promise.resolve(true));
-}
-
 
 class MockUploaderService{
   public uploadProgress: unknown[] = [];
+}
+
+// the map reads the dark mode; the real service needs window.matchMedia, which jsdom lacks
+class MockThemeService {
+  readonly darkMode = signal(false);
 }
 
 
@@ -131,10 +125,15 @@ describe('GalleryComponent', () => {
   let mockShareService: MockShareService;
   let mockCacheService: MockCacheService;
 
+  const setSortedContent = (content: GroupedDirectoryContent): void =>
+    (TestBed.inject(ContentService) as unknown as MockContentService).sortedFilteredContent.set(content);
+
   const setUp = async () => {
     // Reset Config to default state
     Config.load();
     Config.Server.languages = ['en'];
+    // the frame asks for it; it needs window.matchMedia, which jsdom lacks
+    vi.spyOn(DeviceHelper, 'isTouchDevice').mockReturnValue(false);
 
     mockContentLoader = new MockContentLoaderService();
     mockAuthService = new MockAuthenticationService();
@@ -144,45 +143,36 @@ describe('GalleryComponent', () => {
     await TestBed.configureTestingModule({
       imports: [GalleryComponent],
       providers: [
+        provideIcons(appIcons),
         ChangeDetectorRef,
-        DatePipe,
         {provide: GalleryCacheService, useValue: mockCacheService},
         {provide: ContentLoaderService, useValue: mockContentLoader},
         {provide: ContentService, useClass: MockContentService},
         {provide: AuthenticationService, useValue: mockAuthService},
         {provide: ShareService, useValue: mockShareService},
-        {provide: NavigationService, useValue: MockNavigationService},
+        {provide: NavigationService, useClass: MockNavigationService},
         {provide: FilterService, useClass: MockFilterService},
         {provide: GallerySortingService, useClass: MockGallerySortingService},
         {provide: PiTitleService, useClass: MockPiTitleService},
-        {provide: GPXFilesFilterPipe, useClass: MockGPXFilesFilterPipe},
         {provide: BlogService, useClass: MockBlogService},
-        {provide: MDFilesFilterPipe, useClass: MockMDFilesFilterPipe},
         {provide: UploaderService, useClass: MockUploaderService},
-        {provide: FullScreenService, useValue: jasmine.createSpyObj('FullScreenService', ['mock'])},
-        {provide: OverlayService, useValue: jasmine.createSpyObj('OverlayService', ['mock'])},
-        {provide: QueryService, useValue: jasmine.createSpyObj('QueryService', ['getParams', 'getMediaStringId', 'getParamsForDirs'])},
-        {provide: NotificationService, useValue: jasmine.createSpyObj('NotificationService ', ['mock'])},
+        {provide: ThemeService, useClass: MockThemeService},
+        {provide: FullScreenService, useValue: {mock: vi.fn()}},
+        {provide: OverlayService, useValue: {mock: vi.fn()}},
+        {provide: QueryService, useValue: {params: signal({}), getParams: vi.fn(), getMediaStringId: vi.fn(), getParamsForDirs: vi.fn()}},
+        {provide: NotificationService, useValue: {mock: vi.fn()}},
         {
-          provide: GalleryNavigatorService, useValue: jasmine.createSpyObj('GalleryNavigatorService ', [], {
+          provide: GalleryNavigatorService, useValue: {
             isDefaultGridSize: () => true,
-            girdSize: {
-              subscribe: () => {
-              },
-              unsubscribe: () => {
-              }
-            }
-          })
+            girdSize: signal(GridSizes.medium)
+          }
         },
         {
-          provide: MediaButtonModalService, useValue: jasmine.createSpyObj('MediaButtonModalService ', [], {
-            modalData: {
-              subscribe: () => {
-              }
-            }
-          })
+          provide: MediaButtonModalService, useValue: {
+            modalData: signal(null)
+          }
         },
-        {provide: SearchQueryParserService, useValue: jasmine.createSpyObj('SearchQueryParserService', [], {stringify: () => ''})},
+        {provide: SearchQueryParserService, useValue: {stringify: () => ''}},
         {
           provide: ActivatedRoute,
           useValue: {
@@ -191,9 +181,8 @@ describe('GalleryComponent', () => {
           }
         },
         LeafletMarkerClusterModule,
-        provideHttpClient(withInterceptorsFromDi()),
+        provideHttpClient(withXhr()),
         provideHttpClientTesting(),
-        provideNoopAnimations(),
         provideRouter([])
       ]
     }).compileComponents();
@@ -204,14 +193,18 @@ describe('GalleryComponent', () => {
 
   beforeEach(setUp);
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('should create', () => {
     expect(component).toBeTruthy();
   });
 
   it('should initialize with default values', () => {
-    expect(component.showSearchBar).toBeFalse();
-    expect(component.showShare).toBeFalse();
-    expect(component.showRandomPhotoBuilder).toBeFalse();
+    expect(component.showSearchBar()).toBe(false);
+    expect(component.showShare()).toBe(false);
+    expect(component.showRandomPhotoBuilder()).toBe(false);
     expect(component.blogOpen).toBe(Config.Gallery.TopBlogStartsOpen);
     expect(component.mapEnabled).toBe(Config.Map.enabled);
   });
@@ -220,13 +213,13 @@ describe('GalleryComponent', () => {
     it('should return the current content from contentLoader', () => {
       const testContent = {} as ContentWrapperWithError;
       testContent.directory = {name: 'test', path: 'test'} as any;
-      mockContentLoader.content.next(testContent);
+      mockContentLoader.content.set(testContent);
 
       expect(component.ContentWrapper).toBe(testContent);
     });
 
     it('should return null when contentLoader has no content', () => {
-      mockContentLoader.content.next(null);
+      mockContentLoader.content.set(null);
       expect(component.ContentWrapper).toBeNull();
     });
   });
@@ -248,7 +241,7 @@ describe('GalleryComponent', () => {
 
     it('should handle null ContentWrapper gracefully', () => {
       // Simulate the scenario when cache is disabled and ContentWrapper is null
-      mockContentLoader.content.next(null);
+      mockContentLoader.content.set(null);
       fixture.detectChanges();
 
       expect(component.ContentWrapper).toBeNull();
@@ -256,26 +249,25 @@ describe('GalleryComponent', () => {
     });
 
     it('should not crash when accessing ContentWrapper properties with null value', () => {
-      mockContentLoader.content.next(null);
+      mockContentLoader.content.set(null);
       fixture.detectChanges();
 
       // These should not throw errors due to the null checks in the template
       expect(() => {
-        const hasError = component.ContentWrapper?.error;
-        const hasDirectory = component.ContentWrapper?.directory;
-        const hasSearchResult = component.ContentWrapper?.searchResult;
+        void component.ContentWrapper?.error;
+        void component.ContentWrapper?.directory;
+        void component.ContentWrapper?.searchResult;
       }).not.toThrow();
     });
 
     it('should render template correctly with null ContentWrapper', () => {
-      mockContentLoader.content.next(null);
+      mockContentLoader.content.set(null);
       fixture.detectChanges();
 
       const compiled = fixture.nativeElement;
 
       // Main content container should not be visible when ContentWrapper is null
       const mainContainer = compiled.querySelector('.app-gallery-body');
-      console.log(mainContainer);
       expect(mainContainer).toBeNull();
 
       // Spinner container should also not be visible
@@ -286,7 +278,7 @@ describe('GalleryComponent', () => {
     it('should show main content when ContentWrapper is not null', () => {
       const contentWrapper = {} as ContentWrapperWithError;
       contentWrapper.directory = {name: 'test', path: 'test'} as any;
-      mockContentLoader.content.next(contentWrapper);
+      mockContentLoader.content.set(contentWrapper);
       fixture.detectChanges();
 
       const compiled = fixture.nativeElement;
@@ -299,7 +291,7 @@ describe('GalleryComponent', () => {
     it('should display error message when ContentWrapper has error', () => {
       const contentWrapper = {} as ContentWrapperWithError;
       contentWrapper.error = 'Test error message';
-      mockContentLoader.content.next(contentWrapper);
+      mockContentLoader.content.set(contentWrapper);
       fixture.detectChanges();
 
       const compiled = fixture.nativeElement;
@@ -311,7 +303,7 @@ describe('GalleryComponent', () => {
     it('should not show error alert when there is no error', () => {
       const contentWrapper = {} as ContentWrapperWithError;
       contentWrapper.directory = {name: 'test', path: 'test'} as any;
-      mockContentLoader.content.next(contentWrapper);
+      mockContentLoader.content.set(contentWrapper);
       fixture.detectChanges();
 
       const compiled = fixture.nativeElement;
@@ -330,13 +322,13 @@ describe('GalleryComponent', () => {
         media: [],
         metaFile: []
       } as any;
-      mockContentLoader.content.next(contentWrapper);
+      mockContentLoader.content.set(contentWrapper);
 
-      component.directoryContent = {
+      setSortedContent({
         directories: [],
         mediaGroups: [],
         metaFile: []
-      };
+      });
 
       fixture.detectChanges();
 
@@ -352,7 +344,7 @@ describe('GalleryComponent', () => {
         directories: [],
         resultOverflow: false
       } as any;
-      mockContentLoader.content.next(contentWrapper);
+      mockContentLoader.content.set(contentWrapper);
       fixture.detectChanges();
 
       const compiled = fixture.nativeElement;
@@ -367,7 +359,7 @@ describe('GalleryComponent', () => {
         directories: [],
         resultOverflow: true
       } as any;
-      mockContentLoader.content.next(contentWrapper);
+      mockContentLoader.content.set(contentWrapper);
       fixture.detectChanges();
 
       const compiled = fixture.nativeElement;
@@ -385,7 +377,7 @@ describe('GalleryComponent', () => {
         path: 'test',
         isPartial: true
       } as any;
-      mockContentLoader.content.next(contentWrapper);
+      mockContentLoader.content.set(contentWrapper);
       fixture.detectChanges();
 
       const compiled = fixture.nativeElement;
@@ -400,7 +392,7 @@ describe('GalleryComponent', () => {
         path: 'test',
         isPartial: false
       } as any;
-      mockContentLoader.content.next(contentWrapper);
+      mockContentLoader.content.set(contentWrapper);
       fixture.detectChanges();
 
       const compiled = fixture.nativeElement;
@@ -411,7 +403,7 @@ describe('GalleryComponent', () => {
     it('should not show spinner when there is an error', () => {
       const contentWrapper = {} as ContentWrapperWithError;
       contentWrapper.error = 'Test error';
-      mockContentLoader.content.next(contentWrapper);
+      mockContentLoader.content.set(contentWrapper);
       fixture.detectChanges();
 
       const compiled = fixture.nativeElement;
@@ -426,7 +418,7 @@ describe('GalleryComponent', () => {
         directories: [],
         resultOverflow: false
       } as any;
-      mockContentLoader.content.next(contentWrapper);
+      mockContentLoader.content.set(contentWrapper);
       fixture.detectChanges();
 
       const compiled = fixture.nativeElement;
@@ -437,35 +429,35 @@ describe('GalleryComponent', () => {
 
   describe('authentication and permissions', () => {
     it('should set showSearchBar based on authentication', async () => {
-      mockAuthService.canSearch.and.returnValue(true);
+      mockAuthService.canSearch.mockReturnValue(true);
       await component.ngOnInit();
-      expect(component.showSearchBar).toBeTrue();
+      expect(component.showSearchBar()).toBe(true);
 
-      mockAuthService.canSearch.and.returnValue(false);
+      mockAuthService.canSearch.mockReturnValue(false);
       await component.ngOnInit();
-      expect(component.showSearchBar).toBeFalse();
+      expect(component.showSearchBar()).toBe(false);
     });
 
     it('should set showShare based on config and authorization', async () => {
       Config.Sharing.enabled = true;
-      mockAuthService.isAuthorized.and.returnValue(true);
+      mockAuthService.isAuthorized.mockReturnValue(true);
       await component.ngOnInit();
-      expect(component.showShare).toBeTrue();
+      expect(component.showShare()).toBe(true);
 
       Config.Sharing.enabled = false;
       await component.ngOnInit();
-      expect(component.showShare).toBeFalse();
+      expect(component.showShare()).toBe(false);
     });
 
     it('should set showRandomPhotoBuilder based on config and authorization', async () => {
       Config.RandomPhoto.enabled = true;
-      mockAuthService.isAuthorized.and.returnValue(true);
+      mockAuthService.isAuthorized.mockReturnValue(true);
       await component.ngOnInit();
-      expect(component.showRandomPhotoBuilder).toBeTrue();
+      expect(component.showRandomPhotoBuilder()).toBe(true);
 
       Config.RandomPhoto.enabled = false;
       await component.ngOnInit();
-      expect(component.showRandomPhotoBuilder).toBeFalse();
+      expect(component.showRandomPhotoBuilder()).toBe(false);
     });
   });
 
@@ -480,42 +472,47 @@ describe('GalleryComponent', () => {
   describe('ShowMarkDown getter', () => {
     it('should return true when markdown is enabled and metaFile has MD files', () => {
       Config.MetaFile.markdown = true;
-      component.directoryContent = {
+      setSortedContent({
         directories: [],
         mediaGroups: [],
         metaFile: [{name: 'README.md'} as any]
-      };
+      });
 
-      const mockMDPipe = TestBed.inject(MDFilesFilterPipe) as any;
-      mockMDPipe.transform.and.returnValue([{name: 'README.md'}]);
-
-      expect(component.ShowMarkDown).toBeTrue();
+      expect(component.ShowMarkDown).toBe(true);
     });
 
     it('should return false when markdown is disabled', () => {
       Config.MetaFile.markdown = false;
-      component.directoryContent = {
+      setSortedContent({
         directories: [],
         mediaGroups: [],
         metaFile: [{name: 'README.md'} as any]
-      };
+      });
 
-      expect(component.ShowMarkDown).toBeFalse();
+      expect(component.ShowMarkDown).toBe(false);
     });
   });
 
   describe('ShowMap getter', () => {
     it('should return true when photos have GPS data and map is enabled', () => {
-      component.isPhotoWithLocation = true;
-      expect(component.ShowMap).toBeTrue();
+      setSortedContent({
+        directories: [],
+        metaFile: [],
+        mediaGroups: [{name: '', media: [{metadata: {positionData: {GPSData: {latitude: 47.5, longitude: 19.04}}}} as PhotoDTO]}]
+      });
+      expect(component.ShowMap).toBe(true);
     });
 
     it('should return false when map is disabled', () => {
       const originalMapEnabled = component.mapEnabled;
       (component as any).mapEnabled = false;
-      component.isPhotoWithLocation = true;
+      setSortedContent({
+        directories: [],
+        metaFile: [],
+        mediaGroups: [{name: '', media: [{metadata: {positionData: {GPSData: {latitude: 47.5, longitude: 19.04}}}} as PhotoDTO]}]
+      });
 
-      expect(component.ShowMap).toBeFalse();
+      expect(component.ShowMap).toBe(false);
 
       (component as any).mapEnabled = originalMapEnabled;
     });

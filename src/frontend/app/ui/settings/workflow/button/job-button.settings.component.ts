@@ -1,4 +1,4 @@
-import {Component, EventEmitter, Input, Output, TemplateRef} from '@angular/core';
+import { Component, TemplateRef, inject, input, output, computed } from '@angular/core';
 import {JobProgressStates, OnTimerJobProgressDTO,} from '../../../../../../common/entities/job/JobProgressDTO';
 import {ErrorDTO} from '../../../../../../common/entities/Error';
 import {ScheduledJobsService} from '../../scheduled-jobs.service';
@@ -7,63 +7,70 @@ import {JobDTOUtils} from '../../../../../../common/entities/job/JobDTO';
 import {BackendtextService} from '../../../../model/backendtext.service';
 import {BsModalRef,BsModalService} from 'ngx-bootstrap/modal';
 import {ConfigStyle} from '../../settings.service';
-import { NgIf } from '@angular/common';
+
 import { NgIconComponent } from '@ng-icons/core';
 
 @Component({
     selector: 'app-settings-job-button',
     templateUrl: './job-button.settings.component.html',
-    styleUrls: ['./job-button.settings.component.css'],
-    imports: [NgIf, NgIconComponent]
+    styleUrl: './job-button.settings.component.css',
+    imports: [NgIconComponent]
 })
 export class JobButtonComponent {
-  @Input() jobName: string;
-  @Input() config: any;
-  @Input() shortName = false;
-  @Input() disabled = false;
-  @Input() soloRun = false;
-  @Input() allowParallelRun = false;
-  @Input() danger = false;
+  private notification = inject(NotificationService);
+  jobsService = inject(ScheduledJobsService);
+  private modalService = inject(BsModalService);
+  backendTextService = inject(BackendtextService);
+
+  readonly jobName = input.required<string>();
+  readonly config = input<Record<string, unknown> | undefined>(undefined);
+  readonly shortName = input(false);
+  readonly disabled = input(false);
+  readonly soloRun = input(false);
+  readonly allowParallelRun = input(false);
+  readonly danger = input(false);
   JobProgressStates = JobProgressStates;
-  @Output() jobError = new EventEmitter<string>();
-  private modalRef: BsModalRef;
+  readonly jobError = output<string>();
+  private modalRef: BsModalRef | null;
+  private defaultConfig: Record<string, unknown> | undefined;
+  readonly JobName = computed<string | null>(() => this.backendTextService.getJobName(this.jobName()));
+  readonly JobDescription = computed<string | null>(() => this.backendTextService.getJobDescription(this.jobName()));
 
-  constructor(
-    private notification: NotificationService,
-    public jobsService: ScheduledJobsService,
-    private modalService: BsModalService,
-    public backendTextService: BackendtextService
-  ) {
-  }
-
-  private populateConfig() {
-    if (this.config) {
-      return;
+  /**
+   * The config input, or the job's default config if the input is not set.
+   */
+  private get Config(): Record<string, unknown> | undefined {
+    if (this.config()) {
+      return this.config();
     }
-    const c = this.jobsService.getDefaultConfig(this.jobName); // can return with null
-    if (c) {
-      this.config = c;
+    if (!this.defaultConfig) {
+      // can return with null, keep undefined then, so JobDTOUtils.getHashName uses its default config
+      const c = this.jobsService.getDefaultConfig(this.jobName());
+      if (c) {
+        this.defaultConfig = c;
+      }
     }
+    return this.defaultConfig;
   }
 
   public get Running(): boolean {
     return (
-      this.Progress &&
+      !!this.Progress &&
       (this.Progress.state === JobProgressStates.running ||
         this.Progress.state === JobProgressStates.cancelling)
     );
   }
 
-  get Progress(): OnTimerJobProgressDTO {
-    this.populateConfig();
-    return this.jobsService.progress.value[
-      JobDTOUtils.getHashName(this.jobName, this.config)
+  // undefined until the job has a progress
+  get Progress(): OnTimerJobProgressDTO | undefined {
+    return this.jobsService.progress()[
+      JobDTOUtils.getHashName(this.jobName(), this.Config)
       ];
   }
 
 
   public hideModal(): void {
-    this.modalRef.hide();
+    this.modalRef?.hide();
     this.modalRef = null;
   }
 
@@ -71,7 +78,7 @@ export class JobButtonComponent {
     // if we show the button in short form (at the jobs settings),
     // we assume users know what they are doing,
     // so we do not show a confirm window.
-    if(this.shortName){
+    if(this.shortName()){
       await this.start();
       return;
     }
@@ -85,24 +92,23 @@ export class JobButtonComponent {
 
   public async start(): Promise<boolean> {
     this.jobError.emit('');
-    this.populateConfig();
     try {
       await this.jobsService.start(
-        this.jobName,
-        this.config,
-        this.soloRun,
-        this.allowParallelRun
+        this.jobName(),
+        this.Config,
+        this.soloRun(),
+        this.allowParallelRun()
       );
       this.notification.success(
         $localize`Job started` +
         ': ' +
-        this.backendTextService.getJobName(this.jobName)
+        this.backendTextService.getJobName(this.jobName())
       );
       return true;
     } catch (err) {
       console.log(err);
       if (err.message) {
-        this.jobError.emit((err as ErrorDTO).message);
+        this.jobError.emit((err as ErrorDTO).message ?? '');
       }
     }
 
@@ -112,17 +118,17 @@ export class JobButtonComponent {
   public async stop(): Promise<boolean> {
     this.jobError.emit('');
     try {
-      await this.jobsService.stop(this.jobName);
+      await this.jobsService.stop(this.jobName());
       this.notification.info(
         $localize`Stopping job` +
         ': ' +
-        this.backendTextService.getJobName(this.jobName)
+        this.backendTextService.getJobName(this.jobName())
       );
       return true;
     } catch (err) {
       console.error(err);
       if (err.message) {
-        this.jobError.emit((err as ErrorDTO).message);
+        this.jobError.emit((err as ErrorDTO).message ?? '');
       }
     }
     return false;

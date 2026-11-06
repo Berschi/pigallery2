@@ -10,11 +10,10 @@ import {MediaDTO} from '../../../../../src/common/entities/MediaDTO';
 import {SavedSearchDTO} from '../../../../../src/common/entities/album/SavedSearchDTO';
 import {ProjectedAlbumCacheEntity} from '../../../../../src/backend/model/database/enitites/album/ProjectedAlbumCacheEntity';
 import {SessionContext} from '../../../../../src/backend/model/SessionContext';
+import {TestHelper} from '../../../../TestHelper';
 
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const deepEqualInAnyOrder = require('deep-equal-in-any-order');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const chai = require('chai');
 
 chai.use(deepEqualInAnyOrder);
@@ -25,13 +24,13 @@ declare let describe: any;
 declare const after: any;
 declare const before: any;
 declare const beforeEach: any;
-declare const afterEach: any;
 declare const it: any;
 const tmpDescribe = describe;
 describe = DBTestHelper.describe(); // fake it os IDE plays nicely (recognize the test)
 
 
 describe('AlbumManager', (sqlHelper: DBTestHelper) => {
+  before(TestHelper.resetConfig);
   describe = tmpDescribe;
 
 

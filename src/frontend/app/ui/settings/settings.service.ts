@@ -1,16 +1,15 @@
-import {Injectable} from '@angular/core';
-import {BehaviorSubject, first} from 'rxjs';
+import {Injectable, inject, signal} from '@angular/core';
 import {NetworkService} from '../../model/network/network.service';
 
 import {WebConfig} from '../../../../common/config/private/WebConfig';
-import {WebConfigClassBuilder} from 'typeconfig/src/decorators/builders/WebConfigClassBuilder';
+import {WebConfigClassBuilder} from 'typeconfig/web';
 import {ConfigPriority, TAGS} from '../../../../common/config/public/ClientConfig';
 import {CookieNames} from '../../../../common/CookieNames';
-import {CookieService} from 'ngx-cookie-service';
+import {CookieHelper} from '../../model/cookie.helper';
 import {DefaultsJobs} from '../../../../common/entities/job/JobDTO';
 import {StatisticDTO} from '../../../../common/entities/settings/StatisticDTO';
 import {ScheduledJobsService} from './scheduled-jobs.service';
-import {IWebConfigClassPrivate} from 'typeconfig/src/decorators/class/IWebConfigClass';
+import {IWebConfigClassPrivate} from 'typeconfig/common';
 
 
 export enum ConfigStyle {
@@ -18,34 +17,33 @@ export enum ConfigStyle {
 }
 
 
-@Injectable()
+@Injectable({providedIn: 'root'})
 export class SettingsService {
-  public configPriority = ConfigPriority.basic;
-  public configStyle = ConfigStyle.full;
-  public settings: BehaviorSubject<IWebConfigClassPrivate<TAGS> & WebConfig>;
-  private fetchingSettings = false;
-  public statistic: BehaviorSubject<StatisticDTO>;
+  private networkService = inject(NetworkService);
+  private jobsService = inject(ScheduledJobsService);
 
-  constructor(private networkService: NetworkService,
-              private jobsService: ScheduledJobsService,
-              private cookieService: CookieService) {
-    this.statistic = new BehaviorSubject(null);
-    this.settings = new BehaviorSubject<IWebConfigClassPrivate<TAGS> & WebConfig>(WebConfigClassBuilder.attachPrivateInterface(new WebConfig()));
+  public readonly configPriority = signal<ConfigPriority>(ConfigPriority.basic);
+  public readonly configStyle = signal<ConfigStyle>(ConfigStyle.full);
+  public readonly settings = signal<IWebConfigClassPrivate<TAGS> & WebConfig>(WebConfigClassBuilder.attachPrivateInterface(new WebConfig()));
+  private fetchingSettings = false;
+  public readonly statistic = signal<StatisticDTO | null>(null);
+  // Bumped on every edit of the settings forms. The forms edit the settings states in place, so the views
+  // that read another entry's value (hiding, disabling, theme lists) read this to refresh.
+  public readonly edits = signal(0);
+
+  constructor() {
     this.getSettings().catch(console.error);
 
-    if (this.cookieService.check(CookieNames.configPriority)) {
-      this.configPriority =
-          parseInt(this.cookieService.get(CookieNames.configPriority));
+    const configPriority = CookieHelper.get(CookieNames.configPriority);
+    if (configPriority != null) {
+      this.configPriority.set(parseInt(configPriority));
     }
-    if (this.cookieService.check(CookieNames.configStyle)) {
-      this.configStyle =
-          parseInt(this.cookieService.get(CookieNames.configStyle));
+    const configStyle = CookieHelper.get(CookieNames.configStyle);
+    if (configStyle != null) {
+      this.configStyle.set(parseInt(configStyle));
     }
 
-
-    this.settings.pipe(first()).subscribe(() => {
-      this.loadStatistic();
-    });
+    this.loadStatistic().catch(console.error);
     this.jobsService.onJobFinish.subscribe((jobName: string) => {
       if (
           jobName === DefaultsJobs[DefaultsJobs.Indexing] ||
@@ -63,11 +61,11 @@ export class SettingsService {
     }
     this.fetchingSettings = true;
     try {
-      const wcg = WebConfigClassBuilder.attachPrivateInterface(new WebConfig());
+      const wcg: IWebConfigClassPrivate<TAGS> & WebConfig = WebConfigClassBuilder.attachPrivateInterface(new WebConfig());
       wcg.load(
           await this.networkService.getJson<Promise<WebConfig>>('/settings')
       );
-      this.settings.next(wcg);
+      this.settings.set(wcg);
     } catch (e) {
       console.error(e);
     }
@@ -75,27 +73,27 @@ export class SettingsService {
   }
 
 
-  public updateSettings(settings: Record<string, any>, settingsPath: string): Promise<void> {
+  public updateSettings(settings: Record<string, unknown>, settingsPath: string | undefined): Promise<void> {
     return this.networkService.putJson('/settings', {settings, settingsPath});
   }
 
   configSetupChanged(): void {
     // save it for some years
-    this.cookieService.set(
+    CookieHelper.set(
         CookieNames.configPriority,
-        this.configPriority.toString(),
+        this.configPriority().toString(),
         365 * 50
     );
     // save it for some years
-    this.cookieService.set(
+    CookieHelper.set(
         CookieNames.configStyle,
-        this.configStyle.toString(),
+        this.configStyle().toString(),
         365 * 50
     );
   }
 
   async loadStatistic(): Promise<void> {
-    this.statistic.next(
+    this.statistic.set(
         await this.networkService.getJson<StatisticDTO>('/admin/statistic')
     );
   }

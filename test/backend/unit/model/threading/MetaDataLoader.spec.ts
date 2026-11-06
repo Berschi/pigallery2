@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-var-requires */
 import {expect} from 'chai';
 import {MetadataLoader} from '../../../../../src/backend/model/fileaccess/MetadataLoader';
 import {Utils} from '../../../../../src/common/Utils';
@@ -8,6 +7,7 @@ import {PhotoProcessing} from '../../../../../src/backend/model/fileaccess/filep
 import {VideoProcessing} from '../../../../../src/backend/model/fileaccess/fileprocessing/VideoProcessing';
 import {Config} from '../../../../../src/common/config/private/Config';
 import {DatabaseType} from '../../../../../src/common/config/private/PrivateConfig';
+import {TestHelper} from '../../../../TestHelper';
 
 declare const before: any;
 
@@ -24,10 +24,10 @@ function getFileModificationTime(filename: string): Promise<Date | null> {
 }
 
 describe('MetadataLoader', () => {
+  before(TestHelper.resetConfig);
   // loading default settings (this might have been changed by other tests)
 
   before(() => {
-    Config.loadSync();
     Config.Database.type = DatabaseType.sqlite;
     Config.Faces.enabled = true;
     Config.Faces.keywordsToPersons = true;

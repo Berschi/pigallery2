@@ -1,4 +1,4 @@
-import {Component, HostListener, OnDestroy, OnInit, ViewChild} from '@angular/core';
+import { Component, OnDestroy, OnInit, computed, inject, linkedSignal, signal, viewChild } from '@angular/core';
 import {AuthenticationService} from '../../model/network/authentication.service';
 import {ActivatedRoute, Params, Router} from '@angular/router';
 import {ContentService} from './content.service';
@@ -15,18 +15,19 @@ import {take} from 'rxjs/operators';
 import {GallerySortingService, GroupedDirectoryContent} from './navigator/sorting.service';
 import {FilterService} from './filter/filter.service';
 import {PiTitleService} from '../../model/pi-title.service';
-import {GPXFilesFilterPipe} from '../../pipes/GPXFilesFilterPipe';
-import {MDFilesFilterPipe} from '../../pipes/MDFilesFilterPipe';
+import {filterGPXFiles, GPXFilesFilterPipe} from '../../pipes/GPXFilesFilterPipe';
+import {filterMDFiles} from '../../pipes/MDFilesFilterPipe';
 import {ContentLoaderService} from './contentLoader.service';
 import {GalleryLightboxComponent} from './lightbox/lightbox.gallery.component';
 import {FrameComponent} from '../frame/frame.component';
-import {NgIf} from '@angular/common';
+
 import {RandomQueryBuilderGalleryComponent} from './random-query-builder/random-query-builder.gallery.component';
 import {PhotoFrameBuilderGalleryComponent} from './photo-frame-builder/photo-frame-builder.gallery.component';
 import {GalleryNavigatorComponent} from './navigator/navigator.gallery.component';
 import {DirectoriesComponent} from './directories/directories.component';
 import {GalleryBlogComponent} from './blog/blog.gallery.component';
 import {GalleryMapComponent} from './map/map.gallery.component';
+import {ReloadAfterUpgradeComponent} from '../../model/lazy-loading';
 import {PhotoFilterPipe} from '../../pipes/PhotoFilterPipe';
 import {MediaButtonModalComponent} from './grid/photo/media-button-modal/media-button-modal.component';
 import {ContentWrapperWithError} from '../../../../common/entities/ContentWrapper';
@@ -37,92 +38,103 @@ import {UploaderComponent} from './uploader/uploader.gallery.component';
 
 @Component({
   selector: 'app-gallery',
+  host: {
+    '(dragover)': 'onDragOver($event)',
+    '(dragleave)': 'onDragLeave($event)',
+    '(drop)': 'onDrop($event)'
+  },
   templateUrl: './gallery.component.html',
-  styleUrls: ['./gallery.component.css'],
+  styleUrl: './gallery.component.css',
   imports: [
     GalleryLightboxComponent,
     FrameComponent,
-    NgIf,
     RandomQueryBuilderGalleryComponent,
     PhotoFrameBuilderGalleryComponent,
     GalleryNavigatorComponent,
     DirectoriesComponent,
     GalleryBlogComponent,
     GalleryMapComponent,
+    ReloadAfterUpgradeComponent,
     GalleryGridComponent,
     GPXFilesFilterPipe,
     PhotoFilterPipe,
     MediaButtonModalComponent,
     UploaderComponent
-  ]
+]
 })
 export class GalleryComponent implements OnInit, OnDestroy {
-  @ViewChild(GalleryGridComponent, {static: false})
-  grid: GalleryGridComponent;
+  contentLoader = inject(ContentLoaderService);
+  contentService = inject(ContentService);
+  galleryService = inject(GalleryService);
+  private authService = inject(AuthenticationService);
+  private router = inject(Router);
+  private shareService = inject(ShareService);
+  private route = inject(ActivatedRoute);
+  private navigation = inject(NavigationService);
+  private filterService = inject(FilterService);
+  private sortingService = inject(GallerySortingService);
+  private piTitleService = inject(PiTitleService);
+  uploaderService = inject(UploaderService);
 
-  public showSearchBar = false;
-  public showShare = false;
-  public showRandomPhotoBuilder = false;
+  readonly grid = viewChild(GalleryGridComponent);
+
+  public readonly showSearchBar = signal(false);
+  public readonly showShare = signal(false);
+  public readonly showRandomPhotoBuilder = signal(false);
   public blogOpen = Config.Gallery.TopBlogStartsOpen;
 
   config = Config;
-  public isPhotoWithLocation = false;
-  public countDown: {
+  // the remaining time of the sharing; hours, minutes and seconds are two digits
+  public readonly countDown = signal<{
     day: number;
-    hour: number;
-    minute: number;
-    second: number;
-  } = null;
+    hour: string;
+    minute: string;
+    second: string;
+  } | null>(null);
   public readonly mapEnabled: boolean;
-  public directoryContent: GroupedDirectoryContent;
+  // keeps showing the previous content while the next one loads
+  public readonly directoryContent = linkedSignal<GroupedDirectoryContent | null, GroupedDirectoryContent | null | undefined>({
+    source: this.contentService.sortedFilteredContent,
+    computation: (content, previous) => content ?? previous?.value
+  });
+  public readonly isPhotoWithLocation = computed((): boolean =>
+    !!this.directoryContent()?.mediaGroups.some((mediaGroup) =>
+      mediaGroup.media.some((m: PhotoDTO) => !!m.metadata?.positionData?.GPSData?.longitude)
+    )
+  );
   public isUploadOver = false;
   private $counter: Observable<number>;
-  private subscription: { [key: string]: Subscription } = {
-    content: null,
+  private subscription: { route: Subscription | null, timer: Subscription | null } = {
     route: null,
     timer: null,
-    sorting: null,
   };
 
-  constructor(
-    public contentLoader: ContentLoaderService,
-    public contentService: ContentService,
-    public galleryService: GalleryService,
-    private authService: AuthenticationService,
-    private router: Router,
-    private shareService: ShareService,
-    private route: ActivatedRoute,
-    private navigation: NavigationService,
-    private filterService: FilterService,
-    private sortingService: GallerySortingService,
-    private piTitleService: PiTitleService,
-    private gpxFilesFilterPipe: GPXFilesFilterPipe,
-    private mdFilesFilterPipe: MDFilesFilterPipe,
-    public uploaderService: UploaderService,
-  ) {
+  constructor() {
     this.mapEnabled = Config.Map.enabled;
     PageHelper.showScrollY('gallery');
   }
 
   get ContentWrapper(): ContentWrapperWithError {
-    return this.contentLoader.content.value;
+    return this.contentLoader.content();
   }
 
   get ShowMarkDown(): boolean {
-    return this.config.MetaFile.markdown && this.directoryContent?.metaFile && this.mdFilesFilterPipe.transform(this.directoryContent.metaFile).length > 0;
+    const metaFile = this.directoryContent()?.metaFile;
+    return this.config.MetaFile.markdown && !!metaFile && (filterMDFiles(metaFile)?.length ?? 0) > 0;
   }
 
   get ShowMap(): boolean {
-    return (this.isPhotoWithLocation || this.gpxFilesFilterPipe.transform(this.directoryContent?.metaFile)?.length > 0) && this.mapEnabled;
+    return (this.isPhotoWithLocation() || filterGPXFiles(this.directoryContent()?.metaFile).length > 0) && this.mapEnabled;
   }
 
   updateTimer(t: number): void {
-    if (this.shareService.sharingSubject.value == null) {
+    const sharing = this.shareService.sharing();
+    if (sharing == null) {
       return;
     }
     // if the timer is longer than 10 years, just do not show it
     if (
-      (this.shareService.sharingSubject.value.expires - Date.now()) /
+      (sharing.expires - Date.now()) /
       1000 /
       86400 /
       365 >
@@ -132,49 +144,40 @@ export class GalleryComponent implements OnInit, OnDestroy {
     }
 
     t = Math.floor(
-      (this.shareService.sharingSubject.value.expires - Date.now()) / 1000
+      (sharing.expires - Date.now()) / 1000
     );
-    this.countDown = {} as any;
-    this.countDown.day = Math.floor(t / 86400);
-    t -= this.countDown.day * 86400;
-    this.countDown.hour = Math.floor(t / 3600) % 24;
-    t -= this.countDown.hour * 3600;
-    this.countDown.minute = Math.floor(t / 60) % 60;
-    t -= this.countDown.minute * 60;
-    this.countDown.second = t % 60;
+    const day = Math.floor(t / 86400);
+    t -= day * 86400;
+    const hour = Math.floor(t / 3600) % 24;
+    t -= hour * 3600;
+    const minute = Math.floor(t / 60) % 60;
+    t -= minute * 60;
+    const second = t % 60;
+    const twoDigits = (n: number): string => ('0' + n).slice(-2);
+    this.countDown.set({day, hour: twoDigits(hour), minute: twoDigits(minute), second: twoDigits(second)});
   }
 
   ngOnDestroy(): void {
-    if (this.subscription.content !== null) {
-      this.subscription.content.unsubscribe();
-    }
     if (this.subscription.route !== null) {
       this.subscription.route.unsubscribe();
     }
     if (this.subscription.timer !== null) {
       this.subscription.timer.unsubscribe();
     }
-    if (this.subscription.sorting !== null) {
-      this.subscription.sorting.unsubscribe();
-    }
   }
 
-  async ngOnInit(): Promise<boolean> {
+  async ngOnInit(): Promise<boolean | undefined> {
     await this.shareService.wait();
     if (!this.authService.isAuthenticated()) {
       return this.navigation.toLogin();
     }
-    this.showSearchBar = this.authService.canSearch();
-    this.showShare =
+    this.showSearchBar.set(this.authService.canSearch());
+    this.showShare.set(
       Config.Sharing.enabled &&
-      this.authService.isAuthorized(UserRoles.User);
-    this.showRandomPhotoBuilder =
+      this.authService.isAuthorized(UserRoles.User));
+    this.showRandomPhotoBuilder.set(
       Config.RandomPhoto.enabled &&
-      this.authService.isAuthorized(UserRoles.User);
-    this.subscription.content = this.contentService.sortedFilteredContent
-      .subscribe((dc: GroupedDirectoryContent) => {
-        this.onContentChange(dc);
-      });
+      this.authService.isAuthorized(UserRoles.User));
     this.subscription.route = this.route.params.subscribe(this.onRoute);
 
     if (this.shareService.isSharing()) {
@@ -183,9 +186,9 @@ export class GalleryComponent implements OnInit, OnDestroy {
         this.updateTimer(x)
       );
     }
+    return undefined;
   }
 
-  @HostListener('dragover', ['$event'])
   onDragOver(event: DragEvent): void {
     if (this.uploaderService.canUpload()) {
       event.preventDefault();
@@ -194,7 +197,6 @@ export class GalleryComponent implements OnInit, OnDestroy {
     }
   }
 
-  @HostListener('dragleave', ['$event'])
   onDragLeave(event: DragEvent): void {
     if (this.uploaderService.canUpload()) {
       event.preventDefault();
@@ -203,14 +205,13 @@ export class GalleryComponent implements OnInit, OnDestroy {
     }
   }
 
-  @HostListener('drop', ['$event'])
   onDrop(event: DragEvent): void {
     if (this.uploaderService.canUpload()) {
       event.preventDefault();
       event.stopPropagation();
       this.isUploadOver = false;
-      const files = event.dataTransfer.files;
-      if (files.length > 0) {
+      const files = event.dataTransfer?.files;
+      if (files && files.length > 0) {
         this.uploaderService.uploadFiles(files);
       }
     }
@@ -231,7 +232,7 @@ export class GalleryComponent implements OnInit, OnDestroy {
       const sharing = await this.shareService.currentSharing
         .pipe(take(1))
         .toPromise();
-      const qParams: { [key: string]: any } = {};
+      const qParams: Record<string, string | null> = {};
       qParams[QueryParams.gallery.sharingKey_query] =
         this.shareService.getSharingKey();
       const route = this.shareService.getDefaultRoute(sharing);
@@ -250,28 +251,6 @@ export class GalleryComponent implements OnInit, OnDestroy {
 
     this.piTitleService.setDirectoryTitle(directoryName);
     this.contentLoader.loadDirectory(directoryName);
-  };
-
-  private onContentChange = (content: GroupedDirectoryContent): void => {
-    if (!content) {
-      return;
-    }
-    this.directoryContent = content;
-
-    // enforce change detection on grid
-    this.directoryContent.mediaGroups = this.directoryContent.mediaGroups?.slice();
-    this.isPhotoWithLocation = false;
-
-    for (const mediaGroup of content.mediaGroups) {
-
-      if (
-        mediaGroup.media
-          .findIndex((m: PhotoDTO) => !!m.metadata?.positionData?.GPSData?.longitude) !== -1
-      ) {
-        this.isPhotoWithLocation = true;
-        break;
-      }
-    }
   };
 
 }

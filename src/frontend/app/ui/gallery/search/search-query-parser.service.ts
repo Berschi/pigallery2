@@ -3,7 +3,7 @@ import {SearchQueryParser} from '../../../../../common/SearchQueryParser';
 import {SearchQueryDTO} from '../../../../../common/entities/SearchQueryDTO';
 import {SearchQueryUtils} from '../../../../../common/SearchQueryUtils';
 
-@Injectable()
+@Injectable({providedIn: 'root'})
 export class SearchQueryParserService {
   private readonly parser: SearchQueryParser;
 
@@ -15,7 +15,7 @@ export class SearchQueryParserService {
     return this.parser.parse(str);
   }
 
-  stringify(query: SearchQueryDTO): string {
+  stringify(query: SearchQueryDTO | null | undefined): string {
     return this.parser.stringify(SearchQueryUtils.stripDefault(query));
   }
 }

@@ -488,3 +488,36 @@ describe('SearchQueryDTOUtils.isDirectoryAnchoredParent', () => {
     expect(SearchQueryUtils.isDirectoryAnchoredParent('a', [dq('a', TextSearchQueryMatchTypes.like)])).to.be.false;
   });
 });
+
+describe('SearchQueryDTOUtils.parseURLifiedQuery', () => {
+
+  it('should return null for an empty query', () => {
+    expect(SearchQueryUtils.parseURLifiedQuery('')).to.be.null;
+    expect(SearchQueryUtils.parseURLifiedQuery(undefined)).to.be.null;
+  });
+
+  it('should parse an urlified query', () => {
+    expect(SearchQueryUtils.parseURLifiedQuery('{"t":105,"v":"alice"}'))
+      .to.deep.equal({type: SearchQueryTypes.person, value: 'alice'});
+  });
+
+  it('should search for a plain text url as any text', () => {
+    for (const text of ['squirrel', 'árvíztűrő tükörfúrógép', '{"t":105', '2015', 'true', 'null', '[1,2]', '"quoted"']) {
+      expect(SearchQueryUtils.parseURLifiedQuery(text), text)
+        .to.deep.equal({type: SearchQueryTypes.any_text, value: text} as TextSearch);
+    }
+  });
+});
+
+describe('SearchQueryDTOUtils.urlifyExactMatch', () => {
+  it('should build the exact match search of a keyword, a person and a place', () => {
+    expect(SearchQueryUtils.urlifyExactMatch(SearchQueryTypes.keyword, 'Balaton nyár')).to.equal('{"t":104,"mt":1,"v":"Balaton nyár"}');
+    expect(SearchQueryUtils.urlifyExactMatch(SearchQueryTypes.person, 'Árvíztűrő Tükörfúrógép')).to.equal('{"t":105,"mt":1,"v":"Árvíztűrő Tükörfúrógép"}');
+    expect(SearchQueryUtils.urlifyExactMatch(SearchQueryTypes.position, 'Székesfehérvár')).to.equal('{"t":106,"mt":1,"v":"Székesfehérvár"}');
+  });
+
+  it('should be parsed back to the same query', () => {
+    const query = {type: SearchQueryTypes.keyword, matchType: TextSearchQueryMatchTypes.exact_match, value: 'Pécs "belváros" (2)'} as TextSearch;
+    expect(SearchQueryUtils.parseURLifiedQuery(SearchQueryUtils.urlifyExactMatch(query.type, query.value))).to.deep.equal(query);
+  });
+});

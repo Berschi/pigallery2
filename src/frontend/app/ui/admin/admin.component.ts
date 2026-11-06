@@ -1,15 +1,15 @@
-import {AfterViewInit, Component, ElementRef, OnInit, QueryList, ViewChildren,} from '@angular/core';
+import { Component, ElementRef, OnInit, inject, viewChildren, computed } from '@angular/core';
 import {AuthenticationService} from '../../model/network/authentication.service';
 import {UserRoles} from '../../../../common/entities/UserDTO';
-import {NotificationService} from '../../model/notification.service';
+import {CountedNotificationDTO, NotificationService} from '../../model/notification.service';
 import {NotificationType} from '../../../../common/entities/NotificationDTO';
 import {NavigationService} from '../../model/navigation.service';
-import { ViewportScroller, NgIf, NgFor, AsyncPipe, JsonPipe, DatePipe } from '@angular/common';
+import {ViewportScroller, DatePipe} from '@angular/common';
 import {ConfigStyle, SettingsService} from '../settings/settings.service';
 import {ConfigPriority} from '../../../../common/config/public/ClientConfig';
 import {WebConfig} from '../../../../common/config/private/WebConfig';
 import {ISettingsComponent} from '../settings/template/ISettingsComponent';
-import {WebConfigClassBuilder} from 'typeconfig/src/decorators/builders/WebConfigClassBuilder';
+import {WebConfigClassBuilder} from 'typeconfig/web';
 import {enumToTranslatedArray} from '../EnumTranslations';
 import {PiTitleService} from '../../model/pi-title.service';
 import { FrameComponent } from '../frame/frame.component';
@@ -26,45 +26,47 @@ import { StringifyEnum } from '../../pipes/StringifyEnum';
 @Component({
     selector: 'app-admin',
     templateUrl: './admin.component.html',
-    styleUrls: ['./admin.component.css'],
+    styleUrl: './admin.component.css',
     imports: [
-        FrameComponent,
-        NgIf,
-        NgFor,
-        PopoverDirective,
-        BsDropdownDirective,
-        BsDropdownToggleDirective,
-        BsDropdownMenuDirective,
-        NgIconComponent,
-        TemplateComponent,
-        GalleryStatisticComponent,
-        UsersComponent,
-        SharingsListComponent,
-        ExtensionInstallerComponent,
-        AsyncPipe,
-        DatePipe,
-        StringifyEnum,
-    ]
+    FrameComponent,
+    PopoverDirective,
+    BsDropdownDirective,
+    BsDropdownToggleDirective,
+    BsDropdownMenuDirective,
+    NgIconComponent,
+    TemplateComponent,
+    GalleryStatisticComponent,
+    UsersComponent,
+    SharingsListComponent,
+    ExtensionInstallerComponent,
+    DatePipe,
+    StringifyEnum
+]
 })
-export class AdminComponent implements OnInit, AfterViewInit {
-  @ViewChildren('setting') settingsComponents: QueryList<ISettingsComponent>;
-  @ViewChildren('setting', {read: ElementRef})
-  settingsComponentsElemRef: QueryList<ElementRef>;
-  contents: ISettingsComponent[] = [];
+export class AdminComponent implements OnInit {
+  private authService = inject(AuthenticationService);
+  private navigation = inject(NavigationService);
+  viewportScroller = inject(ViewportScroller);
+  notificationService = inject(NotificationService);
+  settingsService = inject(SettingsService);
+  private piTitleService = inject(PiTitleService);
+
+  readonly settingsComponents = viewChildren<ISettingsComponent>('setting');
+  readonly settingsComponentsElemRef = viewChildren('setting', { read: ElementRef });
+  // the server notifications with their alert class and readable details
+  readonly notificationRows = computed((): { notification: CountedNotificationDTO; css: string; details: string | null }[] =>
+    this.notificationService.countedNotifications().map(notification => ({
+      notification,
+      css: this.getCss(notification.type),
+      details: notification.details ? NotificationService.formatDetails(notification.details) : null
+    })));
   configPriorities: { key: number; value: string; }[];
   configStyles: { key: number; value: string; }[];
   public readonly ConfigPriority = ConfigPriority;
   public readonly ConfigStyle = ConfigStyle;
   public readonly configPaths: string[] = [];
 
-  constructor(
-    private authService: AuthenticationService,
-    private navigation: NavigationService,
-    public viewportScroller: ViewportScroller,
-    public notificationService: NotificationService,
-    public settingsService: SettingsService,
-    private piTitleService: PiTitleService
-  ) {
+  constructor() {
     this.configPriorities = enumToTranslatedArray(ConfigPriority);
     this.configStyles = enumToTranslatedArray(ConfigStyle);
     const wc = WebConfigClassBuilder.attachPrivateInterface(new WebConfig());
@@ -72,14 +74,10 @@ export class AdminComponent implements OnInit, AfterViewInit {
         .filter(s => !wc.__state[s].volatile);
   }
 
-  ngAfterViewInit(): void {
-    setTimeout(() => (this.contents = this.settingsComponents.toArray()), 0);
-  }
-
   ngOnInit(): void {
     if (
       !this.authService.isAuthenticated() ||
-      this.authService.user.value.role < UserRoles.Admin
+      !this.authService.isAuthorized(UserRoles.Admin)
     ) {
       this.navigation.toLogin();
       return;
@@ -87,7 +85,7 @@ export class AdminComponent implements OnInit, AfterViewInit {
     this.piTitleService.setTitle($localize`Admin`);
   }
 
-  public getCss(type: NotificationType): string {
+  private getCss(type: NotificationType): string {
     switch (type) {
       case NotificationType.error:
         return 'danger';
@@ -97,20 +95,6 @@ export class AdminComponent implements OnInit, AfterViewInit {
         return 'info';
     }
     return 'info';
-  }
-
-  /**
-   * Makes notification details readable:
-   * strings are shown without JSON quoting/escaping, one sentence per line,
-   * objects are pretty-printed.
-   */
-  public formatDetails(details: unknown): string {
-    if (typeof details !== 'string') {
-      return JSON.stringify(details, null, 2);
-    }
-    return details
-      .replace(/^Error: /, '')
-      .replace(/([.!?])\s+(?=[A-Z])/g, '$1\n');
   }
 }
 

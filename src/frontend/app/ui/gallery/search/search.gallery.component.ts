@@ -1,11 +1,11 @@
-import {Component, OnDestroy, TemplateRef} from '@angular/core';
+import { Component, OnDestroy, TemplateRef, inject, signal } from '@angular/core';
 import {AutoCompleteService} from './autocomplete.service';
 import {ActivatedRoute, Params, Router, RouterLink} from '@angular/router';
 import {Subscription} from 'rxjs';
 import {QueryParams} from '../../../../../common/QueryParams';
 import {MetadataSearchQueryTypes, SearchQueryDTO, SearchQueryTypes, TextSearch,} from '../../../../../common/entities/SearchQueryDTO';
 import {BsModalService} from 'ngx-bootstrap/modal';
-import {BsModalRef} from 'ngx-bootstrap/modal/bs-modal-ref.service';
+import {BsModalRef} from 'ngx-bootstrap/modal';
 import {SearchQueryParserService} from './search-query-parser.service';
 import {AlbumsService} from '../../albums/albums.service';
 import {Config} from '../../../../../common/config/public/Config';
@@ -16,14 +16,14 @@ import {FormsModule} from '@angular/forms';
 import {GallerySearchFieldBaseComponent} from './search-field-base/search-field-base.gallery.component';
 import {NgIconComponent} from '@ng-icons/core';
 import {GallerySearchQueryBuilderComponent} from './query-builder/query-bulder.gallery.component';
-import {NgIf} from '@angular/common';
+
 import {SavedSearchPopupComponent} from '../../albums/saved-search-popup/saved-search-popup.component';
 import {SearchQueryUtils} from '../../../../../common/SearchQueryUtils';
 
 @Component({
   selector: 'app-gallery-search',
   templateUrl: './search.gallery.component.html',
-  styleUrls: ['./search.gallery.component.css'],
+  styleUrl: './search.gallery.component.css',
   providers: [AutoCompleteService],
   imports: [
     FormsModule,
@@ -31,16 +31,19 @@ import {SearchQueryUtils} from '../../../../../common/SearchQueryUtils';
     RouterLink,
     NgIconComponent,
     GallerySearchQueryBuilderComponent,
-    NgIf,
-    SavedSearchPopupComponent,
-  ]
+    SavedSearchPopupComponent
+]
 })
 export class GallerySearchComponent implements OnDestroy {
-  public searchQueryDTO: SearchQueryDTO = {
-    type: SearchQueryTypes.any_text,
-    value: '',
-  } as TextSearch;
-  public rawSearchText = '';
+  private searchQueryParserService = inject(SearchQueryParserService);
+  private albumService = inject(AlbumsService);
+  private route = inject(ActivatedRoute);
+  router = inject(Router);
+  private modalService = inject(BsModalService);
+  authenticationService = inject(AuthenticationService);
+
+  public readonly searchQueryDTO = signal<SearchQueryDTO>({type: SearchQueryTypes.any_text, value: ''} as TextSearch);
+  public readonly rawSearchText = signal('');
   mouseOverAutoComplete = false;
   readonly SearchQueryTypes: typeof SearchQueryTypes;
   public readonly MetadataSearchQueryTypes: {
@@ -48,18 +51,11 @@ export class GallerySearchComponent implements OnDestroy {
     key: SearchQueryTypes;
   }[];
   public saveSearchName = '';
-  private searchModalRef: BsModalRef;
-  private readonly subscription: Subscription = null;
-  private saveSearchModalRef: BsModalRef;
+  private searchModalRef: BsModalRef | null;
+  private readonly subscription: Subscription | null = null;
+  private saveSearchModalRef: BsModalRef | null;
 
-  constructor(
-    private searchQueryParserService: SearchQueryParserService,
-    private albumService: AlbumsService,
-    private route: ActivatedRoute,
-    public router: Router,
-    private modalService: BsModalService,
-    public authenticationService: AuthenticationService
-  ) {
+  constructor() {
     this.SearchQueryTypes = SearchQueryTypes;
     this.MetadataSearchQueryTypes = MetadataSearchQueryTypes.map((v) => ({
       key: v,
@@ -72,7 +68,7 @@ export class GallerySearchComponent implements OnDestroy {
       }
       const searchQuery: string = params[QueryParams.gallery.search.query];
       if (searchQuery) {
-        this.searchQueryDTO = SearchQueryUtils.parseURLifiedQuery(searchQuery);
+        this.searchQueryDTO.set(SearchQueryUtils.parseURLifiedQuery(searchQuery) ?? {type: SearchQueryTypes.any_text, value: ''} as TextSearch);
         this.onQueryChange();
       }
     });
@@ -81,12 +77,12 @@ export class GallerySearchComponent implements OnDestroy {
   get CanCreateAlbum(): boolean {
     return (
       Config.Album.enabled &&
-      this.authenticationService.user.getValue().role >= UserRoles.Admin
+      this.authenticationService.isAuthorized(UserRoles.Admin)
     );
   }
 
   get HTMLSearchQuery(): string {
-    return SearchQueryUtils.urlify(this.searchQueryDTO);
+    return SearchQueryUtils.urlify(this.searchQueryDTO());
   }
 
   ngOnDestroy(): void {
@@ -103,7 +99,7 @@ export class GallerySearchComponent implements OnDestroy {
   }
 
   public hideSearchModal(): void {
-    this.searchModalRef.hide();
+    this.searchModalRef?.hide();
     this.searchModalRef = null;
   }
 
@@ -115,25 +111,25 @@ export class GallerySearchComponent implements OnDestroy {
   }
 
   public hideSaveSearchModal(): void {
-    this.saveSearchModalRef.hide();
+    this.saveSearchModalRef?.hide();
     this.saveSearchModalRef = null;
   }
 
   public onQueryChange(): void {
-    if (Utils.equalsFilter(this.searchQueryParserService.parse(this.rawSearchText), this.searchQueryDTO)) {
+    if (Utils.equalsFilter(this.searchQueryParserService.parse(this.rawSearchText()), this.searchQueryDTO())) {
       return;
     }
 
-    this.rawSearchText = this.searchQueryParserService.stringify(
-      this.searchQueryDTO
-    );
+    this.rawSearchText.set(this.searchQueryParserService.stringify(
+      this.searchQueryDTO()
+    ));
   }
 
   validateRawSearchText(): void {
     try {
-      this.searchQueryDTO = this.searchQueryParserService.parse(
-        this.rawSearchText
-      );
+      this.searchQueryDTO.set(this.searchQueryParserService.parse(
+        this.rawSearchText()
+      ));
     } catch (e) {
       console.error(e);
     }
@@ -148,7 +144,7 @@ export class GallerySearchComponent implements OnDestroy {
   async saveSearch(): Promise<void> {
     await this.albumService.addSavedSearch(
       this.saveSearchName,
-      SearchQueryUtils.stripDefault(this.searchQueryDTO)
+      SearchQueryUtils.stripDefault(this.searchQueryDTO())
     );
     this.hideSaveSearchModal();
   }

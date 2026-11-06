@@ -1,5 +1,4 @@
-import {Component, Input, OnDestroy, OnInit} from '@angular/core';
-import {DomSanitizer, SafeStyle} from '@angular/platform-browser';
+import { Component, OnDestroy, OnInit, computed, inject, input } from '@angular/core';
 import {SubDirectoryDTO} from '../../../../../../common/entities/DirectoryDTO';
 import {RouterLink} from '@angular/router';
 import {Utils} from '../../../../../../common/Utils';
@@ -7,43 +6,30 @@ import {Media} from '../../Media';
 import {Thumbnail, ThumbnailManagerService,} from '../../thumbnailManager.service';
 import {QueryService} from '../../../../model/query.service';
 import {CoverPhotoDTO} from '../../../../../../common/entities/PhotoDTO';
-import { NgIf } from '@angular/common';
+
 import { IconComponent } from '../../../../icon.component';
+import {CssUrlPipe} from '../../../../pipes/CssUrlPipe';
 
 @Component({
     selector: 'app-gallery-directory',
     templateUrl: './directory.gallery.component.html',
-    styleUrls: ['./directory.gallery.component.css'],
+    styleUrl: './directory.gallery.component.css',
     imports: [
-        RouterLink,
-        NgIf,
-        IconComponent,
-    ]
+    RouterLink,
+    IconComponent,
+    CssUrlPipe
+]
 })
 export class GalleryDirectoryComponent implements OnInit, OnDestroy {
-  @Input() directory: SubDirectoryDTO;
-  @Input() size: number;
-  thumbnail: Thumbnail = null;
+  private thumbnailService = inject(ThumbnailManagerService);
+  queryService = inject(QueryService);
 
-  constructor(
-      private thumbnailService: ThumbnailManagerService,
-      private sanitizer: DomSanitizer,
-      public queryService: QueryService
-  ) {
-  }
+  readonly directory = input.required<SubDirectoryDTO>();
+  readonly size = input.required<number>();
+  thumbnail: Thumbnail | null = null;
 
-  public get SamplePhoto(): CoverPhotoDTO {
-    return this.directory.cache?.cover;
-  }
-
-  getSanitizedThUrl(): SafeStyle {
-    return this.sanitizer.bypassSecurityTrustStyle(
-        'url(' +
-        this.thumbnail.Src.replace(/\(/g, '%28')
-            .replace(/'/g, '%27')
-            .replace(/\)/g, '%29') +
-        ')'
-    );
+  public get SamplePhoto(): CoverPhotoDTO | undefined {
+    return this.directory().cache?.cover;
   }
 
   // TODO: implement scroll
@@ -52,9 +38,7 @@ export class GalleryDirectoryComponent implements OnInit, OnDestroy {
        && document.body.scrollTop + window.innerHeight > this.container.nativeElement.offsetTop;
    }*/
 
-  getDirectoryPath(): string {
-    return Utils.concatUrls(this.directory.path, this.directory.name);
-  }
+  public readonly directoryPath = computed((): string => Utils.concatUrls(this.directory().path, this.directory().name));
 
   ngOnDestroy(): void {
     if (this.thumbnail != null) {
@@ -63,9 +47,10 @@ export class GalleryDirectoryComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
-    if (this.directory.cache?.cover) {
+    const cover = this.SamplePhoto;
+    if (cover) {
       this.thumbnail = this.thumbnailService.getThumbnail(
-          new Media(this.SamplePhoto, this.size, this.size)
+          new Media(cover, this.size(), this.size())
       );
     }
   }

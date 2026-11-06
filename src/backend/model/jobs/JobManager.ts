@@ -39,7 +39,7 @@ export class JobManager implements IJobListener, IObjectManager {
     this.runSchedules();
   }
 
-  public getProgresses(): { [id: string]: OnTimerJobProgressDTO } {
+  public getProgresses(): Record<string, OnTimerJobProgressDTO> {
     const prg = Utils.clone(this.progressManager.Progresses);
     this.timers.forEach(t => {
       if (!prg[JobDTOUtils.getHashName(t.schedule.jobName, t.schedule.config)]) {
@@ -127,6 +127,7 @@ export class JobManager implements IJobListener, IObjectManager {
 
   public async cleanUp() {
     this.stopSchedules();
+    await this.progressManager?.cleanUp();
   }
 
   public stopSchedules(): void {

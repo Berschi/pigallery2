@@ -1,9 +1,10 @@
-import {Component, Input, OnChanges, OnDestroy, TemplateRef,} from '@angular/core';
+import {Component, TemplateRef, inject, input, linkedSignal, computed} from '@angular/core';
+import {takeUntilDestroyed} from '@angular/core/rxjs-interop';
 import {JobProgressDTO, JobProgressStates,} from '../../../../../../common/entities/job/JobProgressDTO';
-import {Subscription, timer} from 'rxjs';
+import {timer} from 'rxjs';
 import {BsModalRef, BsModalService} from 'ngx-bootstrap/modal';
 import {BackendtextService} from '../../../../model/backendtext.service';
-import { NgIf, NgFor, DecimalPipe, DatePipe } from '@angular/common';
+import { DecimalPipe, DatePipe } from '@angular/common';
 import { NgIconComponent } from '@ng-icons/core';
 import { FormsModule } from '@angular/forms';
 import { DurationPipe } from '../../../../pipes/DurationPipe';
@@ -11,105 +12,105 @@ import { DurationPipe } from '../../../../pipes/DurationPipe';
 @Component({
     selector: 'app-settings-job-progress',
     templateUrl: './job-progress.settings.component.html',
-    styleUrls: ['./job-progress.settings.component.css'],
+    styleUrl: './job-progress.settings.component.css',
     imports: [
-        NgIf,
-        NgIconComponent,
-        FormsModule,
-        NgFor,
-        DecimalPipe,
-        DatePipe,
-        DurationPipe,
-    ]
+    NgIconComponent,
+    FormsModule,
+    DecimalPipe,
+    DatePipe,
+    DurationPipe
+]
 })
-export class JobProgressComponent implements OnDestroy, OnChanges {
-  @Input() progress: JobProgressDTO;
-  JobProgressStates = JobProgressStates;
-  timeCurrentCopy: number;
-  modalRef: BsModalRef;
-  private timerSub: Subscription;
+export class JobProgressComponent {
+  private modalService = inject(BsModalService);
+  backendTextService = inject(BackendtextService);
 
-  constructor(
-      private modalService: BsModalService,
-      public backendTextService: BackendtextService
-  ) {
+  readonly progress = input<JobProgressDTO>();
+  JobProgressStates = JobProgressStates;
+  modalRef: BsModalRef;
+  // Reset to the job's last reported time on every new progress, then ticks forward every second.
+  private readonly timeCurrentCopy = linkedSignal<number | undefined>(() => this.progress()?.time.end);
+
+  constructor() {
+    timer(0, 1000).pipe(takeUntilDestroyed()).subscribe(() => {
+      if (this.progress()) {
+        this.timeCurrentCopy.update(t => t === undefined ? t : t + 1000);
+      }
+    });
   }
 
-  get ProgressTitle(): string {
-    if (!this.progress) {
+  readonly ProgressTitle = computed<string>(() => {
+    const progress = this.progress();
+    if (!progress) {
       return '';
     }
     return (
         $localize`processed` +
         ':' +
-        this.progress.steps.processed +
+        progress.steps.processed +
         ' + ' +
         $localize`skipped` +
         ':' +
-        this.progress.steps.skipped +
+        progress.steps.skipped +
         ' / ' +
         $localize`all` +
         ':' +
-        this.progress.steps.all
+        progress.steps.all
     );
-  }
+  });
 
-  get Name(): string {
-    if (!this.progress) {
+  readonly Name = computed<string | null>(() => {
+    const progress = this.progress();
+    if (!progress) {
       return '';
     }
-    return this.backendTextService.getJobName(this.progress.jobName);
-  }
+    return this.backendTextService.getJobName(progress.jobName);
+  });
 
-  get TimeAll(): number {
-    if (!this.progress || this.progress.steps.processed === 0) {
+  readonly TimeAll = computed<number>(() => {
+    const progress = this.progress();
+    if (!progress || progress.steps.processed === 0) {
       return 0;
     }
     return (
-        ((this.progress.time.end - this.progress.time.start) /
-            this.progress.steps.processed) *
-        (this.progress.steps.all - this.progress.steps.skipped)
+        ((progress.time.end - progress.time.start) /
+            progress.steps.processed) *
+        (progress.steps.all - progress.steps.skipped)
     );
-  }
+  });
 
-  get Running(): boolean {
+  readonly Running = computed<boolean>(() => {
+    const progress = this.progress();
     return (
-        this.progress &&
-        (this.progress.state === JobProgressStates.running ||
-            this.progress.state === JobProgressStates.cancelling)
+        !!progress &&
+        (progress.state === JobProgressStates.running ||
+            progress.state === JobProgressStates.cancelling)
     );
-  }
+  });
 
-  get Stopped(): boolean {
+  readonly Stopped = computed<boolean>(() => {
+    const progress = this.progress();
     return (
-        this.progress &&
-        this.progress.state !== JobProgressStates.running &&
-        this.progress.state !== JobProgressStates.cancelling
+        !!progress &&
+        progress.state !== JobProgressStates.running &&
+        progress.state !== JobProgressStates.cancelling
     );
-  }
+  });
 
-  get TimeLeft(): number {
-    if (!this.progress) {
+  readonly TimeElapsed = computed<number>(() => {
+    const progress = this.progress();
+    if (!progress) {
       return 0;
     }
-    return (
-        (this.progress.time.end - this.progress.time.start) /
-        this.progress.steps.all
-    );
-  }
+    return (this.timeCurrentCopy() ?? NaN) - progress.time.start;
+  });
 
-  get TimeElapsed(): number {
-    if (!this.progress) {
-      return 0;
-    }
-    return this.timeCurrentCopy - this.progress.time.start;
-  }
-
-  get State(): string {
-    if (!this.progress) {
+  readonly State = computed<string>(() => {
+    const progress = this.progress();
+    if (!progress) {
       return '';
     }
-    switch (this.progress.state) {
+    switch (progress.state) {
       case JobProgressStates.running:
         return $localize`running`;
       case JobProgressStates.cancelling:
@@ -125,31 +126,12 @@ export class JobProgressComponent implements OnDestroy, OnChanges {
       default:
         return 'unknown state';
     }
-  }
+  });
 
   openModal(template: TemplateRef<unknown>): void {
     this.modalRef = this.modalService.show(template, {class: 'modal-lg'});
   }
 
-  ngOnChanges(): void {
-    if (!this.progress) {
-      return;
-    }
-    this.timeCurrentCopy = this.progress.time.end;
-    if (!this.timerSub) {
-      this.timerSub = timer(0, 1000).subscribe(() => {
-        if (this.progress) {
-          this.timeCurrentCopy += 1000;
-        }
-      });
-    }
-  }
-
-  ngOnDestroy(): void {
-    if (this.timerSub) {
-      this.timerSub.unsubscribe();
-    }
-  }
 }
 
 

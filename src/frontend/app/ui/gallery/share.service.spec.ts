@@ -1,37 +1,46 @@
 import {Subject} from 'rxjs';
+import {TestBed} from '@angular/core/testing';
+import {Router} from '@angular/router';
 import {ShareService} from './share.service';
+import {NetworkService} from '../../model/network/network.service';
 import {PublicSharingDTO, ResponseSharingDTO} from '../../../../common/entities/SharingDTO';
 import {SearchQueryTypes, TextSearch} from '../../../../common/entities/SearchQueryDTO';
 import {SearchQueryUtils} from '../../../../common/SearchQueryUtils';
 
 describe('ShareService', () => {
 
-  const setUp = (publicSharing: PublicSharingDTO) => {
+  const setUp = (publicSharing: PublicSharingDTO | null) => {
     const networkService = {
-      getJson: jasmine.createSpy('getJson').and.callFake((url: string) =>
+      getJson: vi.fn().mockImplementation((url: string) =>
         url.endsWith('/publicInfo') ? Promise.resolve(publicSharing) : Promise.resolve(null))
     };
     const router = {events: new Subject()};
-    const service = new ShareService(networkService as any, router as any);
+    TestBed.configureTestingModule({
+      providers: [
+        {provide: NetworkService, useValue: networkService},
+        {provide: Router, useValue: router},
+      ]
+    });
+    const service = TestBed.inject(ShareService);
     return {networkService, service};
   };
 
   describe('getPublicSharing', () => {
     it('should load the public info if it is not loaded yet', async () => {
       const {networkService, service} = setUp({sharingKey: 'key', passwordProtected: false});
-      service.sharingKey = 'key'; // e.g.: set from the session user, not from the route
+      service.sharingKey.set('key'); // e.g.: set from the session user, not from the route
       expect(await service.getPublicSharing()).toEqual({sharingKey: 'key', passwordProtected: false});
       expect(networkService.getJson).toHaveBeenCalledWith('/share/key/publicInfo');
 
       // does not load it again
-      networkService.getJson.calls.reset();
+      networkService.getJson.mockClear();
       await service.getPublicSharing();
       expect(networkService.getJson).not.toHaveBeenCalled();
     });
 
     it('should return null for not valid sharing', async () => {
       const {service} = setUp({sharingKey: 'other_key', passwordProtected: false});
-      service.sharingKey = 'key';
+      service.sharingKey.set('key');
       expect(await service.getPublicSharing()).toBeNull();
     });
   });
@@ -44,7 +53,7 @@ describe('ShareService', () => {
         .toEqual(['/search', SearchQueryUtils.urlify(searchQuery)]);
       expect(service.getDefaultRoute({defaultSearchView: searchQuery} as unknown as ResponseSharingDTO))
         .toEqual(['/search', SearchQueryUtils.urlify(searchQuery)]);
-      expect(SearchQueryUtils.parseURLifiedQuery(service.getDefaultRoute({searchQuery} as unknown as ResponseSharingDTO)[1]))
+      expect(SearchQueryUtils.parseURLifiedQuery(service.getDefaultRoute({searchQuery} as unknown as ResponseSharingDTO)![1]))
         .toEqual(searchQuery);
     });
   });
@@ -52,16 +61,16 @@ describe('ShareService', () => {
   describe('dropSharing', () => {
     it('should forget the sharing', async () => {
       const {service} = setUp({sharingKey: 'key', passwordProtected: false});
-      service.sharingKey = 'key';
+      service.sharingKey.set('key');
       await service.getPublicSharing();
-      service.sharingSubject.next({sharingKey: 'key'} as ResponseSharingDTO);
+      service.sharing.set({sharingKey: 'key'} as ResponseSharingDTO);
 
       service.dropSharing();
 
-      expect(service.isSharing()).toBeFalse();
+      expect(service.isSharing()).toBe(false);
       expect(service.getSharingKey()).toBeNull();
-      expect(service.sharingSubject.value).toBeNull();
-      expect(service.publicSharingSubject.value).toBeNull();
+      expect(service.sharing()).toBeNull();
+      expect(service.publicSharing()).toBeNull();
     });
   });
 });

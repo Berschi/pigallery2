@@ -18,8 +18,7 @@ describe('ContentWrapper', () => {
     }
 
     const content = (cw?.directory ? cw.directory : cw?.searchResult);
-    for (let i = 0; i < content.media.length; ++i) {
-      const m = content.media[i];
+    for (const m of content.media) {
       if (MediaDTOUtils.isPhoto(m)) {
         delete (m as VideoDTO).metadata.bitRate;
         delete (m as VideoDTO).metadata.duration;
@@ -41,8 +40,8 @@ describe('ContentWrapper', () => {
     if (!(content.directories?.length > 0)) {
       delete content.directories;
     }
-    for (let i = 0; i < content.metaFile.length; ++i) {
-      delete content.metaFile[i].id;
+    for (const metaFile of content.metaFile) {
+      delete metaFile.id;
     }
     return cw;
   };
@@ -441,7 +440,7 @@ describe('ContentWrapper', () => {
       const dir1 = TestHelper.getDirectoryEntry();
       const dir2 = TestHelper.getDirectoryEntry();
       const p1 = TestHelper.getPhotoEntry(dir1);
-      const p2 = TestHelper.getPhotoEntry(dir2);
+      TestHelper.getPhotoEntry(dir2);
 
       const sr1 = {
         searchQuery: { type: SearchQueryTypes.any_text, value: '' } as TextSearch,
@@ -462,6 +461,23 @@ describe('ContentWrapper', () => {
       const cw1 = ContentWrapperUtils.build(null, sr1);
       const cw2 = ContentWrapperUtils.build(null, sr2);
       expect(ContentWrapperUtils.equals(cw1, cw2)).to.equal(false);
+    });
+
+    it('should NOT equal media when a metadata property is removed', () => {
+      const dir = TestHelper.getDirectoryEntry();
+      const p1 = TestHelper.getPhotoEntry(dir);
+      p1.metadata.keywords = ['favorite'];
+      // the directory references its media: clone without it
+      const copy = () => {
+        const {directory, ...rest} = p1;
+        return {...Utils.clone(rest), directory} as PhotoDTO;
+      };
+      const p2 = copy();
+      delete p2.metadata.keywords;
+
+      expect(ContentWrapperUtils.equalsMedia(p1, copy())).to.equal(true);
+      expect(ContentWrapperUtils.equalsMedia(p1, p2)).to.equal(false);
+      expect(ContentWrapperUtils.equalsMedia(p2, p1)).to.equal(false);
     });
   });
 
